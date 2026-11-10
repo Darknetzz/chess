@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chess</title>
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="img/pieces/wN.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/jquery@4.0.0/dist/jquery.min.js"
+          integrity="sha384-fgGyf7Mo7DURSOMnOy7ed+dkq5Job205Gnzu6QIg0BOHKaqt4D76Dt8VlDCzcMHV"
+          crossorigin="anonymous"></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <main class="layout">
+    <section class="play">
+      <div class="captured" id="captured-top"></div>
+      <div id="board"></div>
+      <div class="captured" id="captured-bottom"></div>
+    </section>
+
+    <aside class="panel">
+      <h1>Chess</h1>
+      <p id="status" class="status" role="status" aria-live="polite">Loading…</p>
+
+      <div class="group">
+        <label>Mode
+          <select id="mode">
+            <option value="free">Free play (both sides)</option>
+            <option value="bot">Play vs bot</option>
+          </select>
+        </label>
+        <label class="bot-only" hidden>You play
+          <select id="side">
+            <option value="w">White</option>
+            <option value="b">Black</option>
+            <option value="random">Random</option>
+          </select>
+        </label>
+        <label class="bot-only" hidden>Bot level <output id="level-out">5</output>
+          <input id="level" type="range" min="0" max="20" step="1" value="5">
+        </label>
+      </div>
+
+      <div class="buttons">
+        <button type="button" id="new" title="New game (N)">New game</button>
+        <button type="button" id="flip" title="Flip board (F)">Flip board</button>
+        <button type="button" id="coords" class="wide" title="Cycle coordinates (C)">Coordinates</button>
+      </div>
+
+      <div class="nav">
+        <button type="button" id="first" title="Start (Home)" aria-label="Go to start">⏮</button>
+        <button type="button" id="undo" title="Undo (←)" aria-label="Undo">◀</button>
+        <button type="button" id="redo" title="Redo (→)" aria-label="Redo">▶</button>
+        <button type="button" id="last" title="End (End)" aria-label="Go to end">⏭</button>
+      </div>
+
+      <ol id="moves" class="moves" aria-label="Move list"></ol>
+
+      <div class="buttons">
+        <button type="button" id="fen-btn">FEN</button>
+        <button type="button" id="pgn-btn">PGN</button>
+      </div>
+
+      <p class="hint-text">Keys: <kbd>F</kbd> flip · <kbd>C</kbd> coords · <kbd>N</kbd> new · <kbd>←</kbd>/<kbd>→</kbd> undo/redo</p>
+    </aside>
+  </main>
+
+  <dialog id="modal">
+    <h2 id="modal-title">PGN</h2>
+    <textarea id="modal-text" rows="12" spellcheck="false"></textarea>
+    <p id="modal-error" class="modal-error"></p>
+    <div class="buttons">
+      <button type="button" id="modal-copy">Copy</button>
+      <button type="button" id="modal-download">Download</button>
+      <button type="button" id="modal-load">Load</button>
+      <button type="button" id="modal-close">Close</button>
+    </div>
+  </dialog>
+
+  <noscript>This game needs JavaScript.</noscript>
+</body>
+</html>
