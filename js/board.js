@@ -157,12 +157,16 @@ export class Board {
     }
     this._$sq(sq).addClass('sel');
     for (const to of this.targets.keys()) {
-      this._$sq(to).addClass(this.state.pieces[to] || this.targets.get(to)[0].flags.includes('e') ? 'hint-capture' : 'hint');
+      const m = this.targets.get(to)[0];
+      const castle = /[kq]/.test(m.flags);
+      this._$sq(to).addClass(this.state.pieces[to] || m.flags.includes('e') ? 'hint-capture' : castle ? 'hint hint-castle' : 'hint');
+      // Castling: also outline the rook that will jump over the king.
+      if (castle) this._$sq((m.flags.includes('k') ? 'h' : 'a') + m.from[1]).addClass('castle-rook');
     }
   }
 
   _clearHints() {
-    this.$board.children().removeClass('sel hint hint-capture');
+    this.$board.children().removeClass('sel hint hint-capture hint-castle castle-rook');
   }
 
   _deselect() {

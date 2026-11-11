@@ -108,8 +108,22 @@ body {
   box-shadow: inset 0 0 0 calc(var(--board-size) / 8 * 0.09) var(--hint);
   pointer-events: none;
 }
+/* Castling destination: ringed dot; the rook that moves gets a dashed outline. */
+.sq.hint-castle::after {
+  inset: 22%;
+  background: radial-gradient(circle closest-side, var(--hint) 0 45%, transparent 47% 66%, var(--hint) 68% 98%, transparent);
+}
+.sq.castle-rook::after {
+  content: "";
+  position: absolute;
+  inset: 6%;
+  border: calc(var(--board-size) / 8 * 0.05) dashed var(--hint);
+  border-radius: 12%;
+  pointer-events: none;
+  z-index: 2;
+}
 .sq.hint, .sq.hint-capture { cursor: pointer; }
-.no-hints .sq.hint::after, .no-hints .sq.hint-capture::after { display: none; }
+.no-hints .sq.hint::after, .no-hints .sq.hint-capture::after, .no-hints .sq.castle-rook::after { display: none; }
 
 .piece {
   position: absolute;
