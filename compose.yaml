@@ -12,7 +12,27 @@ services:
     labels:
       # locally built image: nothing for watchtower to pull
       com.centurylinklabs.watchtower.enable: "false"
+    depends_on:
+      - bot
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+      dockerfile: bot/Dockerfile
+    image: chess-bot:latest
+    container_name: chess-bot
+    environment:
+      BOT_MOVE_TIME_MS: "${CHESS_BOT_MOVE_TIME_MS:-30000}"
+      BOT_CREATE_PER_HOUR: "${CHESS_BOT_CREATE_PER_HOUR:-30}"
+      # proxies that append to X-Forwarded-For in front of the bot (Apache = 1; +1 per extra reverse proxy)
+      BOT_PROXY_HOPS: "${CHESS_BOT_PROXY_HOPS:-1}"
+    volumes:
+      - bot-data:/data
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
     restart: unless-stopped
 
 volumes:
   chess-data:
+  bot-data:

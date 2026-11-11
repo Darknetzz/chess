@@ -1,7 +1,7 @@
 FROM php:8.5.12-apache
 
 # mod_headers/deflate for .htaccess caching + compression; allow .htaccess overrides.
-RUN a2enmod headers deflate \
+RUN a2enmod headers deflate proxy proxy_http \
  && sed -ri 's!AllowOverride None!AllowOverride All!' /etc/apache2/apache2.conf \
  && mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini" \
  && echo 'ServerTokens Prod' > /etc/apache2/conf-enabled/zz-hardening.conf \
@@ -15,6 +15,7 @@ COPY --chown=www-data:www-data js /var/www/html/js
 COPY --chown=www-data:www-data img /var/www/html/img
 COPY --chown=www-data:www-data vendor /var/www/html/vendor
 COPY --chown=www-data:www-data api /var/www/html/api
+COPY bot/apache.conf /etc/apache2/conf-enabled/zz-bot.conf
 
 ENV DATA_DIR=/data
 VOLUME /data
