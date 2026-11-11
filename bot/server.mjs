@@ -7,6 +7,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Chess } from '../vendor/chess.js/chess.js';
+import { enginePool } from './engine.mjs';
 
 const envInt = (k, d) => (Number.isInteger(+process.env[k]) && +process.env[k] > 0 ? +process.env[k] : d);
 const PORT = envInt('PORT', 3000);
@@ -25,6 +26,11 @@ const SIDE = { w: 'white', b: 'black' };
 const SIDE_CODE = { white: 'w', black: 'b' };
 const NAME_MAX = 40;
 const PRESENCE_MS = 40_000; // a side counts as connected while it has an open /wait or made a request this recently
+const engines = enginePool({
+  maxProcs: envInt('BOT_ENGINE_MAX_PROCS', 2),
+  maxDepth: envInt('BOT_ENGINE_MAX_DEPTH', 12),
+  maxMs: envInt('BOT_ENGINE_MAX_MS', 2000),
+});
 
 // ---------- storage ----------
 mkdirSync(DATA_DIR, { recursive: true });
@@ -91,8 +97,31 @@ function load(id) {
   if (row.status === 'ongoing') {
     live.set(id, g);
     schedule(g);
+    engineTurn(g);
   }
   return g;
+}
+
+/** If the server plays the side to move, ask the engine pool and play its reply. */
+function engineTurn(g, attempt = 0) {
+  const r = g.row;
+  if (r.status !== 'ongoing' || r.engine_side !== g.chess.turn() || g.thinking) return;
+  g.thinking = true;
+  const ply = g.chess.history().length;
+  engines
+    .bestMove(g.chess.fen(), r.engine_level)
+    .then((uci) => {
+      g.thinking = false;
+      if (r.status !== 'ongoing' || g.chess.history().length !== ply) return;
+      if (!uci) throw new Error('engine returned no move');
+      applyMove(g, uci);
+    })
+    .catch((e) => {
+      g.thinking = false;
+      console.error(`engine failed in ${r.id} (attempt ${attempt + 1}):`, e.message);
+      // Retry a few times; if the engine keeps failing, the engine side loses on time like any client.
+      if (attempt < 3) setTimeout(() => engineTurn(g, attempt + 1), 1000).unref();
+    });
 }
 
 function persist(g) {
@@ -324,6 +353,7 @@ function applyMove(g, uci) {
   else schedule(g);
   persist(g);
   wake(g);
+  engineTurn(g);
   return state(g);
 }
 
@@ -419,6 +449,7 @@ for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, () => {
     server.close();
     server.closeAllConnections();
+    engines.close();
     db.close();
     process.exit(0);
   });
