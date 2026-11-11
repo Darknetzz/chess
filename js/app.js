@@ -11,7 +11,7 @@ import { initSettingsUi } from './settings-ui.js';
 import { initAccount } from './account.js';
 import { initLibrary } from './library.js';
 import { hydrateIcons, setButton } from './icons.js';
-import { remoteFromUrl, botApi } from './botgame.js';
+import { remoteFromUrl, botApi, netStore, gameLink } from './botgame.js';
 
 hydrateIcons();
 
@@ -50,9 +50,10 @@ let engineError = null;
 let saveError = null;
 let pendingAnim = null;
 let autoplayTimer = null;
-// Server-refereed bot API game (?game=<id>[#token=<t>]): { id, token, side, server, busy, error }. Saves are off.
+// Server-refereed bot API game (?game=<id>[#token=<t>]). Every live game except the local analysis board is one.
+// { id, token, engineToken, engineLevel, invite, botToken, saved, side, server, busy, engineBusy, error }
 const remote = remoteFromUrl();
-if (remote) Object.assign(remote, { side: null, server: null, busy: false, error: null });
+if (remote) Object.assign(remote, { side: null, server: null, busy: false, engineBusy: false, error: null });
 
 const opposite = (c) => (c === 'w' ? 'b' : 'w');
 const isBot = () => state.settings.mode === 'bot' && !state.replay && !remote;
@@ -136,7 +137,7 @@ const idsByToken = new Map();
 
 function playerNames() {
   if (remote) {
-    const n = (c) => COLOR_NAME[c] + (remote.side === c ? ' (you)' : '');
+    const n = (c) => remote.server?.players?.[c === 'w' ? 'white' : 'black']?.name || COLOR_NAME[c];
     return { white: n('w'), black: n('b') };
   }
   const me = api.user?.username || 'Player';
@@ -567,11 +568,6 @@ function update() {
   renderCaptured(pieces);
 
   const replay = !!state.replay;
-  $('#mode').val(s.mode);
-  $('#side').val(s.side);
-  $('#level').val(s.level);
-  $('#level-out').text(s.level);
-  $('.bot-only').prop('hidden', s.mode !== 'bot');
   $('.live-only').prop('hidden', replay);
   $('#replay-bar').prop('hidden', !replay);
   if (replay) {
@@ -583,7 +579,9 @@ function update() {
     setButton($('#replay-continue'), null, r.result === '*' && atEnd() ? 'Resume game' : 'Continue from here');
   }
   $('#resign').prop('disabled', remote ? !remote.side || isOver() : !inProgress());
-  if (remote) $('#mode').closest('label').add('.bot-only').prop('hidden', true);
+  $('#analysis-btn').prop('disabled', netPlaying());
+  $('#modal-load').prop('hidden', !!remote);
+  renderNet();
   setButton($('#coords'), null, COORD_LABELS[s.coordMode]);
   $('#undo, #first').prop('disabled', state.ply === 0);
   $('#redo, #last').prop('disabled', atEnd());
@@ -597,7 +595,7 @@ let analysisKey = null; // position currently analysed (null = analyzer idle)
 let lastEval = { info: null, result: null, fen: null };
 
 function refreshAnalysis() {
-  const on = state.settings.analysis;
+  const on = state.settings.analysis && !netPlaying(); // no engine help while playing an online game
   $('#analysis-btn').attr('aria-pressed', String(on));
   $('#eval-bar, #analysis-info').prop('hidden', !on);
   if (!on) {
@@ -811,9 +809,77 @@ function toggleAnalysis() {
 }
 
 function askNewGame() {
-  if (remote) return location.assign(location.pathname);
-  if (confirmIf(inProgress(), 'Abandon the current game and start a new one? (It stays in My games.)')) newGame();
+  if (state.replay) return;
+  $('#ng-error').text('');
+  $('#ng-side').val(state.settings.side);
+  $('#ng-level').val(state.settings.level);
+  $('#ng-level-out').text(state.settings.level);
+  syncNewGameForm();
+  $('#newgame-modal')[0].showModal();
 }
+
+function syncNewGameForm() {
+  const opp = $('#ng-opponent').val();
+  $('#newgame-form .ng-online').prop('hidden', opp === 'analysis');
+  $('#newgame-form .ng-stockfish').prop('hidden', opp !== 'stockfish');
+}
+
+/** Start the chosen game: online ones are created on the server, then the page opens them by URL. */
+async function startFromDialog() {
+  const opp = $('#ng-opponent').val();
+  const sideSel = String($('#ng-side').val());
+  const level = Number($('#ng-level').val());
+  changeSettings({ side: sideSel, level });
+  if (opp === 'analysis') {
+    $('#newgame-modal')[0].close();
+    if (remote) return location.assign(`${location.pathname}#analysis`);
+    if (!confirmIf(inProgress(), 'Abandon the current game and start a new one? (It stays in My games.)')) return;
+    changeSettings({ mode: 'free' });
+    return newGame();
+  }
+  const me = sideSel === 'random' ? (Math.random() < 0.5 ? 'w' : 'b') : sideSel;
+  const [mine, theirs] = me === 'w' ? ['white', 'black'] : ['black', 'white'];
+  const theirName = { human: '', stockfish: `Stockfish (level ${level})`, bot: 'Bot' }[opp];
+  $('#ng-start').prop('disabled', true);
+  $('#ng-error').text('Creating game…');
+  try {
+    const g = await botApi.create({
+      move_time_ms: Number($('#ng-time').val()),
+      [mine]: { name: api.user?.username || '' },
+      [theirs]: { name: theirName },
+    });
+    const other = g[`${theirs}_token`];
+    netStore.set(g.game_id, {
+      token: g[`${mine}_token`],
+      engineToken: opp === 'stockfish' ? other : null,
+      engineLevel: opp === 'stockfish' ? level : null,
+      invite: opp === 'human' ? other : null,
+      botToken: opp === 'bot' ? other : null,
+    });
+    flushSave();
+    location.assign(`${location.pathname}?game=${g.game_id}`);
+  } catch (err) {
+    $('#ng-error').text(err.code === 'rate_limited' ? err.message : `Could not create the game: ${err.message}`);
+    $('#ng-start').prop('disabled', false);
+  }
+}
+
+$('#ng-opponent').on('change', syncNewGameForm);
+$('#ng-level').on('input', (e) => $('#ng-level-out').text(e.target.value));
+$('#ng-cancel').on('click', () => $('#newgame-modal')[0].close());
+$('#newgame-form').on('submit', (e) => {
+  e.preventDefault();
+  startFromDialog();
+});
+$(document).on('click', '[data-copy]', async (e) => {
+  const input = $(e.currentTarget.dataset.copy)[0];
+  input.select();
+  try {
+    await navigator.clipboard.writeText(input.value);
+  } catch {
+    document.execCommand('copy');
+  }
+});
 
 $('#new').on('click', askNewGame);
 $('#resign').on('click', resign);
@@ -828,28 +894,6 @@ $('#last').on('click', () => {
   maybeBotMove();
 });
 $('#moves').on('click', '.mv[data-ply]', (e) => goTo(Number(e.currentTarget.dataset.ply)));
-
-$('#mode').on('change', (e) => {
-  state.settings.mode = e.target.value;
-  cancelBot();
-  if (isBot()) resolveHumanColor();
-  saveSettings();
-  update();
-  maybeBotMove();
-});
-$('#side').on('change', (e) => {
-  state.settings.side = e.target.value;
-  cancelBot();
-  resolveHumanColor();
-  saveSettings();
-  update();
-  maybeBotMove();
-});
-$('#level').on('input', (e) => {
-  state.settings.level = Number(e.target.value);
-  $('#level-out').text(state.settings.level);
-  saveSettings();
-});
 
 $('#autoplay').on('click', toggleAutoplay);
 $('#autoplay-speed').on('change', (e) => changeSettings({ autoplaySpeed: Number(e.target.value) }));
@@ -899,6 +943,111 @@ window.addEventListener('pagehide', () => flushSave());
 // ---- Bot API game (server is the referee) ---------------------------------------
 const REASON_TEXT = { threefold: 'threefold repetition', fifty_move: '50-move rule', insufficient_material: 'insufficient material' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const escHtml = (t) => String(t).replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`);
+
+/** Remaining move time as 42s, 3:05 or 23:59:59. */
+function fmtLeft(ms) {
+  const sec = Math.max(0, Math.ceil(ms / 1000));
+  if (sec < 60) return `${sec}s`;
+  const [h, m, s] = [Math.floor(sec / 3600), Math.floor(sec / 60) % 60, sec % 60];
+  const pad = (n) => String(n).padStart(2, '0');
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+/** Playing (not spectating) an online game that is still going: engine help is off. */
+function netPlaying() {
+  return !!remote?.side && remote.server?.status === 'ongoing';
+}
+
+/** Side the in-browser Stockfish plays in this game, if any. */
+const netEngineSide = () => (remote?.engineToken && remote.side ? opposite(remote.side) : null);
+
+/** Players with live presence, plus invite/bot/spectator links for the creator. */
+function renderNet() {
+  $('#net-panel').prop('hidden', !remote);
+  if (!remote) return;
+  const s = remote.server;
+  const rows = ['white', 'black'].map((side) => {
+    const c = side[0];
+    const p = s?.players?.[side] || {};
+    const you = remote.side === c;
+    const engineHere = netEngineSide() === c;
+    const live = s?.status === 'ongoing';
+    const on = live && (you || engineHere || !!p.connected);
+    const tags = [COLOR_NAME[c], you && 'you', (p.engine || engineHere) && 'engine', live && !on && 'not connected'].filter(Boolean).join(' · ');
+    const cls = s?.status === 'ongoing' && s.turn === side ? 'to-move' : '';
+    return `<li class="${cls}"><span class="dot${on ? ' on' : ''}" title="${on ? 'Connected' : 'Not connected'}"></span>`
+      + `<span class="name">${escHtml(p.name || COLOR_NAME[c])}</span><span class="tag">${tags}</span></li>`;
+  });
+  $('#net-players').html(rows.join(''));
+  const over = !!s && s.status !== 'ongoing';
+  const other = remote.side ? COLOR_NAME[opposite(remote.side)] : '';
+  $('#net-invite').prop('hidden', !remote.invite || over);
+  if (remote.invite) {
+    $('#net-invite-side').text(other);
+    $('#net-invite-url').val(gameLink(remote.id, remote.invite));
+  }
+  $('#net-bot').prop('hidden', !remote.botToken || over);
+  if (remote.botToken) {
+    $('#net-bot-side').text(other);
+    $('#net-bot-token').val(remote.botToken);
+    $('#net-bot-cmd').val(`node bot/random_bot.mjs ${location.origin} ${remote.id} ${remote.botToken}`);
+  }
+  $('#net-watch-url').val(gameLink(remote.id));
+}
+
+/** In-browser Stockfish plays its side through the API, exactly like an external bot. */
+async function netEngineTurn() {
+  const s = remote?.server;
+  if (!s || s.status !== 'ongoing' || remote.engineBusy || s.turn[0] !== netEngineSide()) return;
+  remote.engineBusy = true;
+  renderStatus();
+  let retry = false;
+  try {
+    const [uci] = await Promise.all([engine.bestMove(s.fen, remote.engineLevel ?? 5), sleep(BOT_PAUSE_MS)]);
+    if (!uci || remote.server.ply !== s.ply) return;
+    const next = await botApi.move(remote.id, remote.engineToken, uci);
+    remote.engineBusy = false;
+    if (!remote.busy) applyServer(next);
+  } catch (err) {
+    remote.error = `Stockfish: ${err.message || err}`;
+    retry = err.status === undefined || err.status === 0; // engine or network trouble, not a server rejection
+  } finally {
+    remote.engineBusy = false;
+    renderStatus();
+  }
+  if (retry) setTimeout(netEngineTurn, 2000);
+}
+
+/** Store a finished online game in My games once (players only). */
+function maybeSaveNet() {
+  const s = remote?.server;
+  if (!s || s.status === 'ongoing' || !remote.side || remote.saved || !storeReady || !s.moves.length) return;
+  remote.saved = true;
+  netStore.set(remote.id, { saved: true });
+  const names = playerNames();
+  const rec = {
+    id: null,
+    createdAt: Math.floor(s.created_at / 1000),
+    startFen: DEFAULT_POSITION,
+    moves: s.moves.map((m) => m.uci),
+    result: s.result,
+    termination: remoteEndText(s).replace(/^./, (ch) => ch.toUpperCase()),
+    mode: 'net',
+    humanColor: remote.side,
+    botLevel: remote.engineLevel ?? s.players?.[s.players?.white?.engine ? 'white' : 'black']?.engine?.level ?? null,
+    white: names.white,
+    black: names.black,
+    title: `Online game ${remote.id}`,
+    assisted: false,
+  };
+  store.save(rec).catch((err) => {
+    remote.saved = false;
+    netStore.set(remote.id, { saved: false });
+    saveError = `Not saved: ${err.message || err}`;
+    renderStatus();
+  });
+}
 
 function remoteEndText(s) {
   const who = s.reason?.startsWith('black') ? 'Black' : 'White';
@@ -913,9 +1062,9 @@ function remoteStatus() {
   const role = remote.side ? `You are ${COLOR_NAME[remote.side]}` : 'Spectating';
   let t;
   if (s.status === 'ongoing') {
-    const left = Math.max(0, Math.ceil((s.deadline_at - Date.now()) / 1000));
     const mine = remote.side && s.turn[0] === remote.side;
-    t = `${mine ? 'Your move' : `${COLOR_NAME[s.turn[0]]} to move`}${s.in_check ? ' — check!' : ''} · ${left}s left`;
+    const who = mine ? 'Your move' : remote.engineBusy ? 'Stockfish is thinking' : `${COLOR_NAME[s.turn[0]]} to move`;
+    t = `${who}${s.in_check ? ' — check!' : ''} · ${fmtLeft(s.deadline_at - Date.now())} left`;
   } else {
     t = `${RESULT_TEXT[s.result] || s.result} — ${remoteEndText(s)}`;
   }
@@ -929,31 +1078,40 @@ function remoteStatus() {
 function applyServer(s) {
   const prev = remote.server;
   remote.server = s;
+  let sideSet = false;
   if (s.you && !remote.side) {
     remote.side = s.you[0];
     state.settings.orientation = remote.side;
+    sideSet = true;
   }
   const local = state.history.map(toUci);
   const srv = s.moves.map((m) => m.uci);
   const isPrefix = local.length <= srv.length && local.every((u, i) => u === srv[i]);
   const following = atEnd();
-  if (isPrefix && srv.length === local.length) {
+  if (isPrefix && srv.length === local.length && !sideSet) {
     if (prev?.status === 'ongoing' && s.status !== 'ongoing' && state.settings.sound) playSound('end', state.settings.volume);
     // Nothing moved: don't re-render the board (would cut a running move animation).
     board.setMovable(movableColor());
     $('#resign').prop('disabled', !remote.side || isOver());
-    return renderStatus();
+    $('#analysis-btn').prop('disabled', netPlaying());
+    if (prev?.status !== s.status) refreshAnalysis();
+    renderNet();
+    renderStatus();
+  } else if (isPrefix && following && srv.length === local.length + 1) {
+    playMove(fromUci(srv.at(-1)));
+  } else {
+    const g = new Chess(DEFAULT_POSITION);
+    state.startFen = DEFAULT_POSITION;
+    state.history = srv.map((u) => {
+      const r = g.move(fromUci(u));
+      return { from: r.from, to: r.to, promotion: r.promotion, san: r.san };
+    });
+    if (following || !isPrefix) state.ply = state.history.length;
+    rebuild();
+    update();
   }
-  if (isPrefix && following && srv.length === local.length + 1) return void playMove(fromUci(srv.at(-1)));
-  const g = new Chess(DEFAULT_POSITION);
-  state.startFen = DEFAULT_POSITION;
-  state.history = srv.map((u) => {
-    const r = g.move(fromUci(u));
-    return { from: r.from, to: r.to, promotion: r.promotion, san: r.san };
-  });
-  if (following || !isPrefix) state.ply = state.history.length;
-  rebuild();
-  update();
+  netEngineTurn();
+  maybeSaveNet();
 }
 
 async function remoteMove(move, animate) {
@@ -1004,7 +1162,6 @@ async function remoteStart() {
   state.ply = 0;
   state.resigned = null;
   rebuild();
-  setButton($('#new'), 'x', 'Leave game');
   let s;
   try {
     s = await botApi.get(remote.id, remote.token);
@@ -1012,6 +1169,8 @@ async function remoteStart() {
     if (err.status === 401 && remote.token) {
       remote.token = null;
       remote.error = 'Invalid token, spectating';
+      netStore.set(remote.id, { token: null, engineToken: null });
+      remote.engineToken = null;
       return remoteStart();
     }
     remote.error = err.status === 404 ? `Game ${remote.id} not found` : `Could not load game: ${err.message}`;
@@ -1020,10 +1179,26 @@ async function remoteStart() {
   applyServer(s);
   setInterval(() => remote.server?.status === 'ongoing' && renderStatus(), 1000);
   let backoff = 1000;
+  let engineSeen = 0;
   while (remote.server.status === 'ongoing') {
+    // The in-browser engine's side shows as connected only if its token is seen now and then.
+    if (netEngineSide() && Date.now() - engineSeen > 15000) {
+      engineSeen = Date.now();
+      botApi.get(remote.id, remote.engineToken).catch(() => {});
+    }
     try {
+      if (remote.error?.startsWith('Connection')) {
+        // After an outage: quick full resync first, so the status clears without waiting out a long-poll.
+        const fresh = await botApi.get(remote.id, remote.token);
+        remote.error = null;
+        backoff = 1000;
+        state.history = [];
+        state.ply = 0;
+        rebuild();
+        applyServer(fresh);
+        continue;
+      }
       const next = await botApi.wait(remote.id, remote.server.ply, remote.token);
-      if (remote.error?.startsWith('Connection')) remote.error = null;
       backoff = 1000;
       if (!remote.busy) applyServer(next);
     } catch (err) {
@@ -1058,5 +1233,12 @@ api.init().then((user) => {
   storeReady = true;
   update();
   maybeBotMove();
+  if (remote) maybeSaveNet();
 });
 if (remote) remoteStart();
+else if (location.hash === '#analysis') {
+  // "Analysis board" chosen while in an online game: fresh local board.
+  history.replaceState(null, '', location.pathname);
+  changeSettings({ mode: 'free' });
+  newGame();
+}

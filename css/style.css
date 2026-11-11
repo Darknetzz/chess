@@ -430,3 +430,20 @@ button[hidden] { display: none; }
   .layout { padding: 16px; gap: 16px; }
   .panel { width: 100%; }
 }
+
+/* ---- Online (bot API) games ------------------------------------------- */
+.net-panel { display: flex; flex-direction: column; gap: 8px; }
+.net-panel[hidden], .net-share[hidden] { display: none; }
+.net-players { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.net-players li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.net-players li.to-move { font-weight: 600; }
+.net-players .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.net-players .tag { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); opacity: 0.5; flex: none; }
+.dot.on { background: #2ea043; opacity: 1; }
+.net-share { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.copy-row { display: flex; gap: 4px; }
+.copy-row input { flex: 1; min-width: 0; font: 12px ui-monospace, monospace; }
+.copy-row button { flex: none; padding-inline: 8px; }
+#newgame-modal { width: min(420px, 92vw); }
+#newgame-modal .buttons { grid-template-columns: 1fr 1fr; }

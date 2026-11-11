@@ -58,23 +58,21 @@
         </div>
       </div>
 
-      <div class="group live-only">
-        <label>Mode
-          <select id="mode">
-            <option value="free">Free play (both sides)</option>
-            <option value="bot">Play vs bot</option>
-          </select>
-        </label>
-        <label class="bot-only" hidden>You play
-          <select id="side">
-            <option value="w">White</option>
-            <option value="b">Black</option>
-            <option value="random">Random</option>
-          </select>
-        </label>
-        <label class="bot-only" hidden>Bot level <output id="level-out">5</output>
-          <input id="level" type="range" min="0" max="20" step="1" value="5">
-        </label>
+      <div class="net-panel" id="net-panel" hidden>
+        <ul class="net-players" id="net-players"></ul>
+        <div class="net-share" id="net-invite" hidden>
+          <span class="net-label">Invite link: opens the game as <b id="net-invite-side"></b></span>
+          <div class="copy-row"><input id="net-invite-url" readonly><button type="button" data-copy="#net-invite-url" title="Copy"><i data-icon="copy"></i></button></div>
+        </div>
+        <div class="net-share" id="net-bot" hidden>
+          <span class="net-label">Bot token for <b id="net-bot-side"></b>: give it to your bot (see README, Bot API)</span>
+          <div class="copy-row"><input id="net-bot-token" readonly><button type="button" data-copy="#net-bot-token" title="Copy"><i data-icon="copy"></i></button></div>
+          <div class="copy-row"><input id="net-bot-cmd" readonly><button type="button" data-copy="#net-bot-cmd" title="Copy"><i data-icon="copy"></i></button></div>
+        </div>
+        <div class="net-share">
+          <span class="net-label">Spectator link (read-only)</span>
+          <div class="copy-row"><input id="net-watch-url" readonly><button type="button" data-copy="#net-watch-url" title="Copy"><i data-icon="copy"></i></button></div>
+        </div>
       </div>
 
       <div class="buttons">
@@ -104,6 +102,45 @@
       <p class="hint-text"><i data-icon="keyboard"></i> Keys: <kbd>F</kbd> flip · <kbd>C</kbd> coords · <kbd>A</kbd> analysis · <kbd>N</kbd> new · <kbd>←</kbd>/<kbd>→</kbd> undo/redo · <kbd>G</kbd> games · <kbd>S</kbd> settings</p>
     </aside>
   </main>
+
+  <dialog id="newgame-modal">
+    <form id="newgame-form">
+      <h2><i data-icon="square-plus"></i>New game</h2>
+      <div class="group">
+        <label>Opponent
+          <select id="ng-opponent">
+            <option value="human">Human: send an invite link</option>
+            <option value="stockfish">Stockfish (runs in this browser)</option>
+            <option value="bot">External bot: get an API token</option>
+            <option value="analysis">None: analysis board (local, both sides, undo)</option>
+          </select>
+        </label>
+        <label class="ng-online">You play
+          <select id="ng-side">
+            <option value="w">White</option>
+            <option value="b">Black</option>
+            <option value="random">Random</option>
+          </select>
+        </label>
+        <label class="ng-stockfish">Stockfish level <output id="ng-level-out">5</output>
+          <input id="ng-level" type="range" min="0" max="20" step="1" value="5">
+        </label>
+        <label class="ng-online">Time per move (running out loses)
+          <select id="ng-time">
+            <option value="30000">30 seconds</option>
+            <option value="120000" selected>2 minutes</option>
+            <option value="600000">10 minutes</option>
+            <option value="86400000">1 day</option>
+          </select>
+        </label>
+      </div>
+      <p id="ng-error" class="modal-error"></p>
+      <div class="buttons">
+        <button type="submit" id="ng-start"><i data-icon="circle-play"></i><span class="lbl">Start</span></button>
+        <button type="button" id="ng-cancel"><i data-icon="x"></i><span class="lbl">Cancel</span></button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="modal">
     <h2 id="modal-title">PGN</h2>
