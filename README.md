@@ -19,7 +19,7 @@ Static browser chess: free play (both sides) or vs Stockfish. No build step, no 
 ```bash
 docker compose up -d --build
 ```
-Open http://localhost:8080.
+Open http://localhost:8080 (override the host port with `CHESS_PORT` in `.env`).
 
 ## Host on nginx / Apache
 Copy `index.html`, `css/`, `js/`, `img/`, `vendor/` (and `.htaccess` for Apache) into the docroot; subdirectories work since all paths are relative.
