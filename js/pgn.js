@@ -1,5 +1,5 @@
 // PGN / JSON conversion for game records (see store.js for the record shape).
-import { Chess, DEFAULT_POSITION } from 'https://cdn.jsdelivr.net/npm/chess.js@1.4.0/dist/esm/chess.js';
+import { Chess, DEFAULT_POSITION } from '../vendor/chess.js/chess.js';
 
 const ASSISTED_TAG = 'Stockfish-assisted';
 

@@ -1,5 +1,5 @@
 /* global $ */
-import { Chess, DEFAULT_POSITION } from 'https://cdn.jsdelivr.net/npm/chess.js@1.4.0/dist/esm/chess.js';
+import { Chess, DEFAULT_POSITION } from '../vendor/chess.js/chess.js';
 import { Board, pieceUrl, setPieceSet } from './board.js';
 import { Engine, Analyzer } from './engine.js';
 import * as Settings from './settings.js';
