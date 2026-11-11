@@ -51,10 +51,15 @@ function db(): PDO
     return $pdo;
 }
 
+const SCHEMA_VERSION = 2;
+
 function migrate(PDO $pdo): void
 {
-    if ((int)$pdo->query('PRAGMA user_version')->fetchColumn() >= 1) return;
-    $pdo->exec(<<<SQL
+    if ((int)$pdo->query('PRAGMA user_version')->fetchColumn() >= SCHEMA_VERSION) return;
+    // Serialise concurrent first requests; re-read the version under the write lock.
+    $pdo->exec('BEGIN IMMEDIATE');
+    $version = (int)$pdo->query('PRAGMA user_version')->fetchColumn();
+    if ($version < 1) $pdo->exec(<<<SQL
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY,
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -86,6 +91,11 @@ function migrate(PDO $pdo): void
         CREATE INDEX IF NOT EXISTS login_attempts_key ON login_attempts(key, ts);
         PRAGMA user_version = 1;
         SQL);
+    if ($version < 2) $pdo->exec(<<<SQL
+        ALTER TABLE games ADD COLUMN assisted INTEGER NOT NULL DEFAULT 0;
+        PRAGMA user_version = 2;
+        SQL);
+    $pdo->exec('COMMIT');
 }
 
 function start_session(): void

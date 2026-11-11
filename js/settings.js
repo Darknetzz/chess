@@ -49,6 +49,7 @@ export const DEFAULTS = {
   showCheck: true,
   autoQueen: false,
   confirmActions: true,
+  analysis: false,
   autoplaySpeed: 1.5,
 };
 

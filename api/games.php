@@ -4,7 +4,7 @@ require __DIR__ . '/_lib.php';
 
 const MAX_IMPORT = 500;
 const MAX_MOVES = 1000;
-const LIST_FIELDS = 'id, created_at, updated_at, result, termination, mode, human_color, bot_level, white, black, title, start_fen, moves';
+const LIST_FIELDS = 'id, created_at, updated_at, result, termination, mode, human_color, bot_level, white, black, title, start_fen, moves, assisted';
 
 $uid = require_user();
 $pdo = db();
@@ -42,6 +42,7 @@ function clean_game(array $g): array
         'white' => str_field($g, 'white', 64),
         'black' => str_field($g, 'black', 64),
         'title' => str_field($g, 'title', 128),
+        'assisted' => ($g['assisted'] ?? false) === true ? 1 : 0,
         'created_at' => $created,
     ];
 }
@@ -62,13 +63,14 @@ function out(array $r): array
         'white' => $r['white'],
         'black' => $r['black'],
         'title' => $r['title'],
+        'assisted' => (bool)$r['assisted'],
     ];
 }
 
 function insert(PDO $pdo, int $uid, array $c): int
 {
-    $st = $pdo->prepare('INSERT INTO games (user_id, created_at, updated_at, start_fen, moves, result, termination, mode, human_color, bot_level, white, black, title)
-        VALUES (:uid, :created_at, :updated_at, :start_fen, :moves, :result, :termination, :mode, :human_color, :bot_level, :white, :black, :title)');
+    $st = $pdo->prepare('INSERT INTO games (user_id, created_at, updated_at, start_fen, moves, result, termination, mode, human_color, bot_level, white, black, title, assisted)
+        VALUES (:uid, :created_at, :updated_at, :start_fen, :moves, :result, :termination, :mode, :human_color, :bot_level, :white, :black, :title, :assisted)');
     $st->execute(['uid' => $uid, 'updated_at' => time()] + $c);
     return (int)$pdo->lastInsertId();
 }
@@ -115,7 +117,7 @@ switch (method()) {
         $c = clean_game(body());
         unset($c['created_at']);
         $st = $pdo->prepare('UPDATE games SET updated_at = :updated_at, start_fen = :start_fen, moves = :moves, result = :result, termination = :termination,
-            mode = :mode, human_color = :human_color, bot_level = :bot_level, white = :white, black = :black, title = :title WHERE id = :id AND user_id = :uid');
+            mode = :mode, human_color = :human_color, bot_level = :bot_level, white = :white, black = :black, title = :title, assisted = :assisted WHERE id = :id AND user_id = :uid');
         $st->execute(['updated_at' => time(), 'id' => $id, 'uid' => $uid] + $c);
         respond(out(fetch_one($pdo, $uid, $id)));
 

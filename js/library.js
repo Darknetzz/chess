@@ -36,6 +36,7 @@ export function initLibrary({ onReplay, onDeleted, currentId, beforeOpen }) {
             <div class="game-info">
               <div class="game-players">${esc(g.white || '?')} <span class="muted">vs</span> ${esc(g.black || '?')}
                 <span class="badge r${esc(g.result).replace(/[^0-9a-z]/gi, '')}">${RESULT_TEXT[g.result] || esc(g.result)}</span>
+                ${g.assisted ? '<span class="badge" title="Stockfish analysis was used">hints</span>' : ''}
                 ${g.id === cur ? '<span class="badge">current</span>' : ''}</div>
               <div class="game-sub muted">${esc(date)} · ${sub}</div>
             </div>

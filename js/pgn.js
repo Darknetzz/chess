@@ -1,6 +1,8 @@
 // PGN / JSON conversion for game records (see store.js for the record shape).
 import { Chess, DEFAULT_POSITION } from 'https://cdn.jsdelivr.net/npm/chess.js@1.4.0/dist/esm/chess.js';
 
+const ASSISTED_TAG = 'Stockfish-assisted';
+
 export const toUci = (m) => m.from + m.to + (m.promotion || '');
 export const fromUci = (u) => ({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || undefined });
 
@@ -25,6 +27,7 @@ export function recordToPgn(rec) {
   g.setHeader('Black', rec.black || '?');
   g.setHeader('Result', rec.result || '*');
   if (rec.termination) g.setHeader('Termination', rec.termination);
+  if (rec.assisted) g.setHeader('Annotator', ASSISTED_TAG);
   return g.pgn();
 }
 
@@ -70,6 +73,7 @@ export function pgnToRecord(text) {
     black: h.Black && h.Black !== '?' ? h.Black.slice(0, 64) : '',
     title: title.slice(0, 128),
     createdAt: parseDate(h.Date),
+    assisted: h.Annotator === ASSISTED_TAG,
   };
 }
 
@@ -101,6 +105,7 @@ export function parseImport(text) {
           black: String(r.black || '').slice(0, 64),
           title: String(r.title || '').slice(0, 128),
           createdAt: Number.isInteger(r.createdAt) ? r.createdAt : undefined,
+          assisted: r.assisted === true,
         };
         rec.startFen = new Chess(rec.startFen).fen(); // validates FEN
         replay(rec); // validates moves

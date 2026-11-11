@@ -1,7 +1,7 @@
 /* global $ */
 import { Chess, DEFAULT_POSITION } from 'https://cdn.jsdelivr.net/npm/chess.js@1.4.0/dist/esm/chess.js';
 import { Board, pieceUrl, setPieceSet } from './board.js';
-import { Engine } from './engine.js';
+import { Engine, Analyzer } from './engine.js';
 import * as Settings from './settings.js';
 import { play as playSound } from './sound.js';
 import { api } from './api.js';
@@ -20,7 +20,9 @@ const START_COUNT = { p: 8, n: 2, b: 2, r: 2, q: 1 };
 const COLOR_NAME = { w: 'White', b: 'Black' };
 const RESULT_TEXT = { '1-0': 'White wins', '0-1': 'Black wins', '1/2-1/2': 'Draw', '*': 'Unfinished' };
 
-const engine = new Engine(new URL('../vendor/stockfish/stockfish-19-lite-single.js', import.meta.url));
+const STOCKFISH_URL = new URL('../vendor/stockfish/stockfish-19-lite-single.js', import.meta.url);
+const engine = new Engine(STOCKFISH_URL);
+const analyzer = new Analyzer(STOCKFISH_URL);
 
 // ---- State -----------------------------------------------------------------
 const state = {
@@ -32,6 +34,7 @@ const state = {
   gameId: null, // id in the store (number = account, string = local)
   createdAt: null,
   gameToken: 0, // bumps whenever a different game becomes live
+  assisted: false, // Stockfish analysis was shown during the live game
   settings: Settings.loadLocal(),
   replay: null, // { rec, live: snapshot of the live game }
 };
@@ -73,8 +76,8 @@ const isOver = () => game.isGameOver() || (!!state.resigned && atEnd());
 
 // ---- Persistence of the live game -------------------------------------------
 function liveSnapshot() {
-  const { startFen, history, ply, humanColor, resigned, gameId, createdAt, gameToken } = state;
-  return { startFen, history, ply, humanColor, resigned, gameId, createdAt, gameToken };
+  const { startFen, history, ply, humanColor, resigned, gameId, createdAt, gameToken, assisted } = state;
+  return { startFen, history, ply, humanColor, resigned, gameId, createdAt, gameToken, assisted };
 }
 
 function persist() {
@@ -110,6 +113,7 @@ function restore() {
     state.resigned = ['w', 'b'].includes(data.resigned) ? data.resigned : null;
     state.gameId = typeof data.gameId === 'number' || typeof data.gameId === 'string' ? data.gameId : null;
     state.createdAt = Number.isInteger(data.createdAt) ? data.createdAt : null;
+    state.assisted = data.assisted === true;
   } catch {
     /* corrupt saved game: start fresh */
   }
@@ -147,10 +151,11 @@ function liveRecord() {
     botLevel: state.settings.mode === 'bot' ? state.settings.level : null,
     ...playerNames(),
     title: '',
+    assisted: state.assisted,
   };
 }
 
-const saveSig = () => `${state.gameToken}|${state.history.map(toUci).join(' ')}|${state.resigned || ''}|${state.settings.mode}|${state.humanColor}`;
+const saveSig = () => `${state.gameToken}|${state.history.map(toUci).join(' ')}|${state.resigned || ''}|${state.settings.mode}|${state.humanColor}|${state.assisted}`;
 
 let storeReady = false; // set once we know whether saves go to the account or this browser
 
@@ -339,6 +344,7 @@ function newGame(fen = DEFAULT_POSITION, history = []) {
   state.history = history;
   state.ply = history.length;
   state.resigned = null;
+  state.assisted = false;
   resolveHumanColor();
   rebuild();
   engine.newGame().catch(() => {});
@@ -406,6 +412,7 @@ function continueFromHere() {
   state.replay = null;
   state.history = state.history.slice(0, state.ply);
   state.resigned = null;
+  state.assisted = !!rec.assisted;
   if (resume) {
     startNewIdentity(rec.id, rec.createdAt);
     if (rec.mode === 'bot') Object.assign(state.settings, { mode: 'bot', side: rec.humanColor, level: rec.botLevel ?? state.settings.level });
@@ -458,6 +465,7 @@ function statusText() {
   else if (thinking) s = `Bot (${t}) is thinking…`;
   else s = `${t} to move${game.inCheck() ? ' — check!' : ''}`;
   if (!atEnd()) s += ` · viewing move ${state.ply}/${state.history.length}`;
+  if (state.assisted) s += ' · assisted';
   if (saveError) s += ` · ${saveError}`;
   return s;
 }
@@ -554,8 +562,88 @@ function update() {
   $('#coords').text(COORD_LABELS[s.coordMode]);
   $('#undo, #first').prop('disabled', state.ply === 0);
   $('#redo, #last').prop('disabled', atEnd());
+  refreshAnalysis();
   persist();
   scheduleSave();
+}
+
+// ---- Analysis ----------------------------------------------------------------
+let analysisKey = null; // position currently analysed (null = analyzer idle)
+let lastEval = { info: null, result: null, fen: null };
+
+function refreshAnalysis() {
+  const on = state.settings.analysis;
+  $('#analysis-btn').attr('aria-pressed', String(on));
+  $('#eval-bar, #analysis-info').prop('hidden', !on);
+  if (!on) {
+    if (analysisKey !== null) analyzer.terminate();
+    analysisKey = null;
+    board.setArrows([]);
+    return;
+  }
+  const over = isOver();
+  if (!state.replay && !over && !state.assisted) {
+    state.assisted = true; // saved with the game (saveSig includes it)
+    renderStatus();
+  }
+  const fen = game.fen();
+  const key = `${fen}|${over}`;
+  if (key !== analysisKey) {
+    analysisKey = key;
+    board.setArrows([]);
+    if (over) {
+      analyzer.stop();
+      lastEval = { info: null, result: outcomeOf(game, atEnd() ? state.resigned : null).result, fen };
+    } else {
+      lastEval = { info: null, result: null, fen };
+      analyzer
+        .analyze(fen, (info) => {
+          if (analysisKey !== key) return;
+          lastEval = { info, result: null, fen };
+          board.setArrows([fromUci(info.best)]);
+          renderEval();
+        })
+        .catch((err) => {
+          console.error(err);
+          if (analysisKey === key) $('#analysis-info').text('Analysis unavailable (engine failed to load)');
+        });
+    }
+  }
+  renderEval();
+}
+
+const fmtEval = ({ cp, mate }) =>
+  mate !== null ? `#${mate < 0 ? '−' : ''}${Math.abs(mate)}` : `${cp < 0 ? '−' : '+'}${(Math.abs(cp) / 100).toFixed(1)}`;
+
+function renderEval() {
+  const { info, result, fen } = lastEval;
+  const flipped = state.settings.orientation === 'b';
+  let pct = 50;
+  let text = '';
+  let line;
+  if (result) {
+    pct = result === '1-0' ? 100 : result === '0-1' ? 0 : 50;
+    text = result === '1/2-1/2' ? '½' : result;
+    line = `Game over · ${RESULT_TEXT[result] || result}`;
+  } else if (!info) {
+    line = 'Analysing…';
+  } else {
+    pct = info.mate !== null ? (info.mate > 0 ? 100 : 0) : 50 + 50 * Math.tanh(info.cp / 400);
+    text = fmtEval(info);
+    let san = info.best;
+    try {
+      san = new Chess(fen).move(fromUci(info.best)).san;
+    } catch {
+      /* keep UCI */
+    }
+    line = `${text} · depth ${info.depth} · best ${san}`;
+  }
+  $('#eval-bar').toggleClass('flipped', flipped).find('.eval-fill').css('height', `${pct}%`);
+  const whiteAhead = pct >= 50;
+  const atBottom = whiteAhead !== flipped; // the leader's end of the bar
+  $('#eval-text').text(text).toggleClass('bottom', atBottom).toggleClass('top', !atBottom)
+    .toggleClass('on-light', whiteAhead).toggleClass('on-dark', !whiteAhead);
+  $('#analysis-info').text(line);
 }
 
 // ---- Settings ----------------------------------------------------------------
@@ -693,6 +781,10 @@ function cycleCoords() {
   changeSettings({ coordMode: COORD_MODES[(i + 1) % COORD_MODES.length] });
 }
 
+function toggleAnalysis() {
+  changeSettings({ analysis: !state.settings.analysis });
+}
+
 function askNewGame() {
   if (confirmIf(inProgress(), 'Abandon the current game and start a new one? (It stays in My games.)')) newGame();
 }
@@ -701,6 +793,7 @@ $('#new').on('click', askNewGame);
 $('#resign').on('click', resign);
 $('#flip').on('click', flip);
 $('#coords').on('click', cycleCoords);
+$('#analysis-btn').on('click', toggleAnalysis);
 $('#undo').on('click', undo);
 $('#redo').on('click', redo);
 $('#first').on('click', () => goTo(0));
@@ -761,6 +854,7 @@ $(document).on('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (k === 'f') flip();
   else if (k === 'c') cycleCoords();
+  else if (k === 'a') toggleAnalysis();
   else if (k === 'n' && !state.replay) askNewGame();
   else if (k === 'g') library.open();
   else if (k === 's') settingsUi.open();

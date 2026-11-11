@@ -22,11 +22,12 @@ export class Board {
    *   getMoves(square) -> verbose legal moves from that square
    *   onMove(from, to, promotion, dragged) -> called when the user makes a legal move
    * render() state also takes: autoQueen (skip the promotion picker),
-   *   animate ({ from, to, ms } slide the piece that just landed on `to`)
+   *   animate ({ from, to, ms } slide the piece that just landed on `to`),
+   *   arrows ([{ from, to }] drawn over the board; also settable alone via setArrows)
    */
   constructor($root, opts) {
     this.opts = opts;
-    this.state = { pieces: {}, orientation: 'w', coordMode: 'edge', lastMove: null, checkSquare: null, movable: null, autoQueen: false };
+    this.state = { pieces: {}, orientation: 'w', coordMode: 'edge', lastMove: null, checkSquare: null, movable: null, autoQueen: false, arrows: [] };
     this.selected = null;
     this.targets = new Map(); // dest square -> [verbose moves]
     this.drag = null;
@@ -34,6 +35,7 @@ export class Board {
 
     this.$root = $root.addClass('board-wrap');
     this.$board = $('<div class="board" role="grid" aria-label="Chess board"></div>').appendTo($root);
+    this.$arrows = $('<svg class="arrows" viewBox="0 0 8 8" aria-hidden="true"></svg>').appendTo($root);
     this.$promo = $('<div class="promo" hidden></div>').appendTo($root);
 
     this._bind();
@@ -72,10 +74,42 @@ export class Board {
     });
     this.$board.html(html);
     if (animate?.ms > 0) this._animate(animate);
+    this._drawArrows();
 
     // Keep a valid selection across re-renders (e.g. coord toggle / flip mid-selection).
     if (this.selected && this._canMove(pieces[this.selected])) this._select(this.selected);
     else this._deselect();
+  }
+
+  /** Replace the arrow overlay without re-rendering the squares. */
+  setArrows(arrows) {
+    this.state.arrows = arrows || [];
+    this._drawArrows();
+  }
+
+  _drawArrows() {
+    const flip = this.state.orientation === 'b';
+    const xy = (sq) => {
+      const f = FILES.indexOf(sq[0]);
+      const r = Number(sq[1]) - 1;
+      return flip ? [7 - f + 0.5, r + 0.5] : [f + 0.5, 7 - r + 0.5];
+    };
+    let svg = '';
+    for (const { from, to } of this.state.arrows || []) {
+      const [x1, y1] = xy(from);
+      const [x2, y2] = xy(to);
+      const len = Math.hypot(x2 - x1, y2 - y1);
+      if (!len) continue;
+      const ux = (x2 - x1) / len;
+      const uy = (y2 - y1) / len;
+      const head = 0.42;
+      const bx = x2 - ux * head; // base of the arrow head
+      const by = y2 - uy * head;
+      const w = 0.2; // half-width of the head
+      svg += `<g class="arrow"><line x1="${x1}" y1="${y1}" x2="${bx}" y2="${by}"/>`
+        + `<polygon points="${x2},${y2} ${bx - uy * w},${by + ux * w} ${bx + uy * w},${by - ux * w}"/></g>`;
+    }
+    this.$arrows.html(svg);
   }
 
   /** FLIP: draw the moved piece at its origin square, then transition it home. */

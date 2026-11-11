@@ -10,7 +10,8 @@ Browser chess: free play (both sides) or vs Stockfish, with optional accounts th
 ## Features
 - Free play or vs bot (play white/black/random, level 0–20), resign
 - Legal-move hints, drag or click to move, promotion picker, check/last-move highlight, sounds, move animation
-- Move list (click to jump), undo/redo (`←`/`→`), `Home`/`End`, flip (`F`), coordinates off/edges/every tile (`C`)
+- Move list (click to jump), undo/redo (`←`/`→`), `Home`/`End`, flip (`F`), analysis (`A`), coordinates off/edges/every tile (`C`)
+- **Stockfish analysis** (`A`, or Settings): live best-move arrow, eval bar and depth for the shown position, on a separate full-strength worker; live games played with it on are marked *assisted* (badge in My games, `Annotator` header in PGN)
 - **Settings** (`S`): board themes + custom colours, highlight colour, 7 piece sets, board size, light/dark UI, animation speed, sounds/volume, toggles for hints/highlights/auto-queen/confirmations
 - **Accounts**: username + password registration/login; settings and games sync to the account
 - **My games** (`G`): every game autosaves (to the account, or this browser for guests — guests can upload them after logging in); replay with autoplay, continue/resume from any move, delete

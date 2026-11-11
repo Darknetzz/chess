@@ -16,7 +16,13 @@
   <main class="layout">
     <section class="play">
       <div class="captured" id="captured-top"></div>
-      <div id="board"></div>
+      <div class="board-row">
+        <div class="eval-bar" id="eval-bar" hidden title="Stockfish evaluation">
+          <div class="eval-fill"></div>
+          <span class="eval-text" id="eval-text"></span>
+        </div>
+        <div id="board"></div>
+      </div>
       <div class="captured" id="captured-bottom"></div>
     </section>
 
@@ -30,6 +36,7 @@
         </div>
       </div>
       <p id="status" class="status" role="status" aria-live="polite">Loading…</p>
+      <p id="analysis-info" class="analysis-info" hidden></p>
 
       <div class="replay-bar" id="replay-bar" hidden>
         <div class="replay-title" id="replay-title"></div>
@@ -75,6 +82,7 @@
         <button type="button" id="resign" class="live-only" title="Resign">Resign</button>
         <button type="button" id="flip" title="Flip board (F)">Flip board</button>
         <button type="button" id="coords" title="Cycle coordinates (C)">Coordinates</button>
+        <button type="button" id="analysis-btn" title="Stockfish analysis: best move + evaluation (A)" aria-pressed="false">Analysis</button>
       </div>
 
       <div class="nav">
@@ -93,7 +101,7 @@
         <button type="button" id="settings-btn" title="Settings (S)">Settings</button>
       </div>
 
-      <p class="hint-text">Keys: <kbd>F</kbd> flip · <kbd>C</kbd> coords · <kbd>N</kbd> new · <kbd>←</kbd>/<kbd>→</kbd> undo/redo · <kbd>G</kbd> games · <kbd>S</kbd> settings</p>
+      <p class="hint-text">Keys: <kbd>F</kbd> flip · <kbd>C</kbd> coords · <kbd>A</kbd> analysis · <kbd>N</kbd> new · <kbd>←</kbd>/<kbd>→</kbd> undo/redo · <kbd>G</kbd> games · <kbd>S</kbd> settings</p>
     </aside>
   </main>
 
@@ -191,6 +199,7 @@
         <label class="check"><input type="checkbox" name="showCheck"> Highlight check</label>
         <label class="check"><input type="checkbox" name="autoQueen"> Always promote to queen</label>
         <label class="check"><input type="checkbox" name="confirmActions"> Confirm new game / resign</label>
+        <label class="check"><input type="checkbox" name="analysis"> Stockfish analysis (best move + evaluation; marks live games as assisted)</label>
         <label>Appearance
           <select name="uiTheme">
             <option value="system">System</option>
