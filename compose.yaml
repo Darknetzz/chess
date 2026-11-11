@@ -27,6 +27,10 @@ services:
       BOT_CREATE_PER_HOUR: "${CHESS_BOT_CREATE_PER_HOUR:-30}"
       # proxies that append to X-Forwarded-For in front of the bot (Apache = 1; +1 per extra reverse proxy)
       BOT_PROXY_HOPS: "${CHESS_BOT_PROXY_HOPS:-1}"
+      # server-side Stockfish (headless games only): parallel engine processes, depth and time caps
+      BOT_ENGINE_MAX_PROCS: "${CHESS_BOT_ENGINE_MAX_PROCS:-2}"
+      BOT_ENGINE_MAX_DEPTH: "${CHESS_BOT_ENGINE_MAX_DEPTH:-12}"
+      BOT_ENGINE_MAX_MS: "${CHESS_BOT_ENGINE_MAX_MS:-2000}"
     volumes:
       - bot-data:/data
     labels:

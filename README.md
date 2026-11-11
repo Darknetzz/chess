@@ -2,7 +2,7 @@
 
 # Chess
 
-Browser chess: free play (both sides) or vs Stockfish, with optional accounts that save your games. No build step, no npm, no Composer.
+Browser chess against a friend (invite link), Stockfish or your own bot, all refereed by one server-side game API, plus a local analysis board. Optional accounts save your games. No build step, no npm, no Composer.
 
 - Rules/SAN/FEN/PGN: [chess.js](https://github.com/jhlywa/chess.js) 1.4.0, vendored in `vendor/chess.js/` (shared by the browser and the bot API server)
 - UI: jQuery 4.0.0 (jsDelivr, SRI-pinned) + hand-written board (`js/board.js`)
@@ -11,13 +11,18 @@ Browser chess: free play (both sides) or vs Stockfish, with optional accounts th
 - Bot API: Node 26 with built-ins only (`node:http`, `node:sqlite`), `bot/server.mjs`. It is the referee for games between external bots and/or humans.
 
 ## Features
-- Free play or vs bot (play white/black/random, level 0–20), resign
+- **New game** (`N`): pick your side (white/black/random), the time per move, and the opponent:
+  - **Human**: you get an invite link that opens the game as the other side
+  - **Stockfish** (level 0–20): runs in your browser and plays its moves through the API like any bot
+  - **External bot**: you get the bot's token and a ready-made command
+  - **Analysis board**: local free play for both sides, with undo/redo and FEN/PGN load (no server, no clock)
+- Online games: the board follows your side, shows whose turn it is, the time left for the move, a live connected dot per player, and resign. Illegal or out-of-turn moves are rejected by the server and the piece snaps back. Tokens stay in this browser, so a reload or reconnect resumes the game. A spectator link without a token is read-only and live. Engine analysis is disabled while you play.
 - Legal-move hints, drag or click to move, promotion picker, check/last-move highlight, sounds, move animation
 - Move list (click to jump), undo/redo (`←`/`→`), `Home`/`End`, flip (`F`), analysis (`A`), coordinates off/edges/every tile (`C`)
 - **Stockfish analysis** (`A`, or Settings): live best-move arrow, eval bar and depth for the shown position, on a separate full-strength worker; live games played with it on are marked *assisted* (badge in My games, `Annotator` header in PGN)
 - **Settings** (`S`): board themes + custom colours, highlight colour, 7 piece sets, board size, light/dark UI, animation speed, sounds/volume, toggles for hints/highlights/auto-queen/confirmations
 - **Accounts**: username + password registration/login; settings and games sync to the account
-- **My games** (`G`): every game autosaves (to the account, or this browser for guests — guests can upload them after logging in); replay with autoplay, continue/resume from any move, delete
+- **My games** (`G`): finished online games are saved when they end. Analysis-board games autosave (to the account, or this browser for guests — guests can upload them after logging in); replay with autoplay, continue/resume from any move, delete
 - **Export/import**: per-game PGN, all games as multi-game PGN or JSON backup; import multi-game PGN or JSON (bad games are reported and skipped). FEN/PGN of the current game via the FEN/PGN buttons.
 - **Bot API**: external bots (AI agents) play each other or a human over HTTP. The server validates every move. Watch any game live at `/?game=<id>`, or play a side at `/?game=<id>#token=<token>` (see [Bot API](#bot-api)).
 
@@ -31,6 +36,7 @@ Open http://localhost:8080. `.env` options:
 - `CHESS_BOT_MOVE_TIME_MS` – default per-move time limit for bot API games (default 30000)
 - `CHESS_BOT_CREATE_PER_HOUR` – games one IP may create per hour (default 30)
 - `CHESS_BOT_PROXY_HOPS` – how many reverse proxies append to `X-Forwarded-For` in front of the bot service. Default 1 (the bundled Apache). Set it to 2 if another proxy sits in front of this stack, otherwise every client shares one rate limit.
+- `CHESS_BOT_ENGINE_MAX_PROCS` / `CHESS_BOT_ENGINE_MAX_DEPTH` / `CHESS_BOT_ENGINE_MAX_MS` – caps for server-side Stockfish in headless games: parallel engine processes (default 2, each single-threaded with a 16 MB hash), search depth (12) and time per move (2000 ms)
 
 The SQLite DB lives in the `chess-data` volume (`/data/chess.sqlite`). Bot API games live in the `bot-data` volume (`/data/bot.sqlite`). Apache proxies `/api/games` and `/api/games/*` to the `bot` container.
 
@@ -56,13 +62,24 @@ Refereed games for external bots, or a bot against a human. The server holds the
 
 | Endpoint | Body | Purpose |
 |---|---|---|
-| `POST /api/games` | `{move_time_ms?}` | Create a game. Returns `201` with the game state plus `white_token` and `black_token` |
+| `POST /api/games` | `{move_time_ms?, white?, black?, engine?}` | Create a game. Returns `201` with the game state plus `white_token` and `black_token` |
 | `GET /api/games/{id}` | – | Game state |
-| `GET /api/games/{id}/wait?since=<ply>` | – | Long-poll: answers as soon as `ply > since` or the game ends, otherwise after 30 s with the unchanged state |
+| `GET /api/games/{id}/wait?since=<ply>` | – | Long-poll: answers as soon as `ply > since`, the game ends or a player connects/disconnects. Otherwise it answers after 30 s with the unchanged state |
 | `POST /api/games/{id}/move` | `{token, move}` | Play a move in UCI form: `e2e4`, `e1g1` (castling), `e7e8q` (promotion) |
 | `POST /api/games/{id}/resign` | `{token}` | Resign the token's side |
 
-**Tokens** are returned only once, on create. Give each player its own token: it is the only credential for that side. On the two `GET` endpoints, an optional `Authorization: Bearer <token>` header adds `"you": "white"|"black"` to the response.
+**Tokens** are returned only once, on create. Give each player its own token: it is the only credential for that side. On the two `GET` endpoints, an optional `Authorization: Bearer <token>` header adds `"you": "white"|"black"` to the response and marks that side as connected.
+
+**Create options** (all optional):
+- `white` / `black`: `{"name": "…"}`, a display name of up to 40 characters
+- `engine`: `{"side": "white"|"black", "level": 0-20}`. The server plays that side with Stockfish, and its token is not returned. This is meant for headless games such as bot vs Stockfish. Engine resources are capped: see `CHESS_BOT_ENGINE_*`. When a human plays Stockfish on the board, Stockfish runs in the browser instead and holds a normal token.
+
+```bash
+curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/json' \
+  -d '{"move_time_ms": 10000, "white": {"name": "MyBot"}, "engine": {"side": "black", "level": 5}}'
+```
+
+**Presence:** `players.<side>.connected` is true while that side has an open `/wait` with its token, or has made a request in the last 40 s. A server engine side is always connected. A `/wait` also returns early, with the same ply, when either side connects or disconnects.
 
 **Game state:**
 ```jsonc
@@ -77,6 +94,10 @@ Refereed games for external bots, or a bot against a human. The server holds the
   "ply": 1,
   "moves": [{ "san": "e4", "uci": "e2e4" }],
   "in_check": false,
+  "players": {                  // name: null if none was given; engine: {level} when the server plays that side
+    "white": { "name": "MyBot", "engine": null, "connected": true },
+    "black": { "name": "Stockfish (level 5)", "engine": { "level": 5 }, "connected": true }
+  },
   "move_time_ms": 30000,
   "created_at": 1794420808543,  // all times: Unix epoch milliseconds
   "last_move_at": 1794420810000,// null before the first move
@@ -109,7 +130,11 @@ node bot/random_bot.mjs http://localhost:8080 <game_id> <white_token>
 node bot/random_bot.mjs http://localhost:8080 <game_id> <black_token>
 ```
 
-**Board UI:** `/?game=<id>` spectates live. `/?game=<id>#token=<token>` lets you play that side on the board; the token goes in the URL fragment so it never reaches server logs. Games played this way aren't saved to My games.
+**Board UI:** the board is a client of this API, using the same flow as a bot.
+- `/?game=<id>` spectates live.
+- `/?game=<id>#token=<token>` (or `&token=`) joins as that side. The token goes in the URL fragment, so it never reaches server logs. The page then moves it into `localStorage` (`chess.net.<id>`) and drops it from the address bar, so reloading `/?game=<id>` resumes as that player.
+- Opening an invite link in a browser that already holds the other side's token switches that browser to the invited side.
+- Finished games are saved to My games (mode `net`).
 
 ## Licenses
 GPLv3 (`LICENSE`), required by Stockfish. chess.js: BSD-2-Clause (`vendor/chess.js/LICENSE`). Piece sets via lichess:
