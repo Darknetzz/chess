@@ -22,6 +22,9 @@ const UCI_RE = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 const ID_RE = /^[A-Za-z0-9]{10}$/;
 const B62 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 const SIDE = { w: 'white', b: 'black' };
+const SIDE_CODE = { white: 'w', black: 'b' };
+const NAME_MAX = 40;
+const PRESENCE_MS = 40_000; // a side counts as connected while it has an open /wait or made a request this recently
 
 // ---------- storage ----------
 mkdirSync(DATA_DIR, { recursive: true });
@@ -44,8 +47,20 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS games_status ON games(status);
 `);
+if (db.prepare('PRAGMA user_version').get().user_version < 1) {
+  db.exec(`
+    BEGIN;
+    ALTER TABLE games ADD COLUMN white_name TEXT NOT NULL DEFAULT '';
+    ALTER TABLE games ADD COLUMN black_name TEXT NOT NULL DEFAULT '';
+    ALTER TABLE games ADD COLUMN engine_side TEXT;
+    ALTER TABLE games ADD COLUMN engine_level INTEGER;
+    PRAGMA user_version = 1;
+    COMMIT;
+  `);
+}
 const q = {
-  insert: db.prepare(`INSERT INTO games (id, created_at, white_hash, black_hash, move_time_ms, deadline_at) VALUES (?, ?, ?, ?, ?, ?)`),
+  insert: db.prepare(`INSERT INTO games (id, created_at, white_hash, black_hash, move_time_ms, deadline_at, white_name, black_name, engine_side, engine_level)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   get: db.prepare('SELECT * FROM games WHERE id = ?'),
   ongoing: db.prepare(`SELECT * FROM games WHERE status = 'ongoing'`),
   save: db.prepare(`UPDATE games SET moves = ?, status = ?, result = ?, reason = ?, last_move_at = ?, deadline_at = ? WHERE id = ?`),
@@ -72,7 +87,7 @@ function load(id) {
   if (live.has(id)) return live.get(id);
   const row = q.get.get(id);
   if (!row) return null;
-  const g = { row, chess: replay(row), waiters: new Set(), timer: null };
+  const g = { row, chess: replay(row), waiters: new Set(), timer: null, seen: { w: 0, b: 0 }, open: { w: 0, b: 0 }, presence: '' };
   if (row.status === 'ongoing') {
     live.set(id, g);
     schedule(g);
@@ -120,10 +135,24 @@ function onDeadline(g) {
 
 // ---------- long-poll ----------
 function wake(g) {
+  g.presence = presenceSig(g);
   const s = state(g);
   for (const w of g.waiters) w(s);
   g.waiters.clear();
 }
+
+// ---------- presence ----------
+const connected = (g, c) => g.row.engine_side === c || g.open[c] > 0 || Date.now() - g.seen[c] < PRESENCE_MS;
+const presenceSig = (g) => `${+connected(g, 'w')}${+connected(g, 'b')}`;
+
+/** Record activity by a side; wake waiters if someone's connected state changed. */
+function touch(g, side) {
+  g.seen[side] = Date.now();
+  if (g.row.status === 'ongoing' && presenceSig(g) !== g.presence) wake(g);
+}
+setInterval(() => {
+  for (const g of live.values()) if (presenceSig(g) !== g.presence) wake(g);
+}, 5_000).unref();
 
 // ---------- views ----------
 function state(g) {
@@ -141,6 +170,12 @@ function state(g) {
     ply: history.length,
     moves: history.map((m) => ({ san: m.san, uci: m.lan })),
     in_check: g.chess.isCheck(),
+    players: Object.fromEntries(
+      ['w', 'b'].map((c) => [
+        SIDE[c],
+        { name: r[`${SIDE[c]}_name`] || null, engine: r.engine_side === c ? { level: r.engine_level } : null, connected: connected(g, c) },
+      ]),
+    ),
     move_time_ms: r.move_time_ms,
     created_at: r.created_at,
     last_move_at: r.last_move_at,
@@ -230,22 +265,47 @@ function create(body, req) {
   if (!Number.isInteger(ms) || ms < MIN_MOVE_MS || ms > MAX_MOVE_MS) {
     throw err(400, 'invalid_move_time', `move_time_ms must be an integer between ${MIN_MOVE_MS} and ${MAX_MOVE_MS}`);
   }
+  const names = {};
+  for (const side of ['white', 'black']) {
+    const p = body[side] ?? {};
+    const name = p && typeof p === 'object' ? (p.name ?? '') : null;
+    if (typeof name !== 'string' || name.length > NAME_MAX) throw err(400, 'invalid_player', `"${side}" must be {name} with name up to ${NAME_MAX} chars`);
+    names[side] = name.trim().replace(/[\u0000-\u001f]/g, '');
+  }
+  let engine = null;
+  if (body.engine != null) {
+    const { side, level = 5 } = body.engine;
+    if (!SIDE_CODE[side] || !Number.isInteger(level) || level < 0 || level > 20) {
+      throw err(400, 'invalid_engine', '"engine" must be {side: "white"|"black", level: 0-20}');
+    }
+    engine = { side: SIDE_CODE[side], level };
+    names[side] ||= `Stockfish (level ${level})`;
+  }
   rateLimit(clientIp(req));
   const tokens = { white: randomBytes(32).toString('base64url'), black: randomBytes(32).toString('base64url') };
   const now = Date.now();
   let id;
   do id = newId(); while (q.get.get(id));
-  q.insert.run(id, now, hash(tokens.white), hash(tokens.black), ms, now + ms);
+  q.insert.run(id, now, hash(tokens.white), hash(tokens.black), ms, now + ms, names.white, names.black, engine?.side ?? null, engine?.level ?? null);
   const g = load(id);
-  return { ...state(g), white_token: tokens.white, black_token: tokens.black };
+  const out = { ...state(g) };
+  // The server plays the engine side, so its token is never handed out.
+  for (const c of ['w', 'b']) if (engine?.side !== c) out[`${SIDE[c]}_token`] = tokens[SIDE[c]];
+  return out;
 }
 
 function move(g, body) {
   const side = authSide(g, body.token);
+  touch(g, side);
   needOngoing(g);
   if (side !== g.chess.turn()) throw err(409, 'not_your_turn', `Not your turn: ${SIDE[g.chess.turn()]} to move`);
   const uci = typeof body.move === 'string' ? body.move.trim().toLowerCase() : '';
   if (!UCI_RE.test(uci)) throw err(400, 'invalid_move_format', 'Body must include "move" in UCI form, e.g. "e2e4" or "e7e8q"');
+  return applyMove(g, uci);
+}
+
+/** Validate and play a UCI move for the side to move; shared by clients and the server engine. */
+function applyMove(g, uci) {
   const legal = g.chess.moves({ verbose: true }).map((m) => m.lan);
   if (!legal.includes(uci)) {
     const needsPromo = legal.some((l) => l.length === 5 && l.startsWith(uci));
@@ -269,6 +329,7 @@ function move(g, body) {
 
 function resign(g, body) {
   const side = authSide(g, body.token);
+  touch(g, side);
   needOngoing(g);
   finish(g, 'resigned', side === 'w' ? '0-1' : '1-0', `${SIDE[side]}_resigned`);
   persist(g);
@@ -276,24 +337,33 @@ function resign(g, body) {
   return state(g);
 }
 
-function wait(g, url, res) {
+/** Long-poll. A waiter also wakes when either side connects or disconnects (same ply, new `players`). */
+function wait(g, url, res, side) {
   const s = state(g);
   const raw = url.searchParams.get('since');
   const since = raw === null ? s.ply : Number(raw);
   if (!Number.isInteger(since) || since < 0) throw err(400, 'invalid_since', '"since" must be a non-negative integer ply count');
   if (s.ply > since || s.status !== 'ongoing') return s;
+  if (side) {
+    g.open[side]++;
+    if (presenceSig(g) !== g.presence) wake(g); // tell the others before we start waiting ourselves
+  }
   return new Promise((resolve) => {
+    let closed = false;
     const done = (st) => {
+      if (closed) return;
+      closed = true;
       clearTimeout(t);
       g.waiters.delete(done);
+      if (side) {
+        g.open[side]--;
+        g.seen[side] = Date.now();
+      }
       resolve(st);
     };
     const t = setTimeout(() => done(state(g)), WAIT_MS);
     g.waiters.add(done);
-    res.on('close', () => {
-      clearTimeout(t);
-      g.waiters.delete(done);
-    });
+    res.on('close', () => done(null));
   });
 }
 
@@ -315,9 +385,10 @@ async function handle(req, res) {
   if (want === 'GET') {
     // Optional "Authorization: Bearer <token>" adds "you": the side that token plays.
     const bearer = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization || '')?.[1];
-    const you = bearer ? { you: SIDE[authSide(g, bearer)] } : {};
-    const s = action === 'wait' ? await wait(g, url, res) : state(g);
-    return send(res, 200, { ...s, ...you });
+    const side = bearer ? authSide(g, bearer) : null;
+    if (side) touch(g, side);
+    const s = action === 'wait' ? await wait(g, url, res, side) : state(g);
+    return s && send(res, 200, side ? { ...s, you: SIDE[side] } : s);
   }
   const body = await readJson(req);
   return send(res, 200, action === 'move' ? move(g, body) : resign(g, body));
