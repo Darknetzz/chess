@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400">
+  <title>Chess — browser chess with Stockfish</title>
+  <defs>
+    <pattern id="board" width="160" height="160" patternUnits="userSpaceOnUse" patternTransform="rotate(-12)">
+      <rect width="160" height="160" fill="#f0d9b5"/>
+      <rect width="80" height="80" fill="#b58863"/>
+      <rect x="80" y="80" width="80" height="80" fill="#b58863"/>
+    </pattern>
+    <linearGradient id="fade" x1="0" x2="1">
+      <stop offset=".38" stop-color="#1d1c1a"/>
+      <stop offset=".78" stop-color="#1d1c1a" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#1d1c1a" stop-opacity=".2"/>
+    </linearGradient>
+    <filter id="s" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000" flood-opacity=".5"/>
+    </filter>
+  </defs>
+  <rect width="1280" height="400" fill="#1d1c1a"/>
+  <rect x="-200" y="-200" width="1800" height="800" fill="url(#board)"/>
+  <rect width="1280" height="400" fill="url(#fade)"/>
+  <rect y="392" width="1280" height="8" fill="#4a7c59"/>
+
+  <!-- logo mark -->
+  <g transform="translate(80 104) scale(.375)" filter="url(#s)">
+    <clipPath id="r"><rect width="512" height="512" rx="96"/></clipPath>
+    <pattern id="mini" width="256" height="256" patternUnits="userSpaceOnUse">
+      <rect width="256" height="256" fill="#f0d9b5"/>
+      <rect width="128" height="128" fill="#b58863"/>
+      <rect x="128" y="128" width="128" height="128" fill="#b58863"/>
+    </pattern>
+    <rect width="512" height="512" rx="96" fill="url(#mini)"/>
+    <rect width="512" height="512" rx="96" fill="#22201c" opacity=".12"/>
+    <rect x="8" y="8" width="496" height="496" rx="88" fill="none" stroke="#4a7c59" stroke-width="16"/>
+    <g transform="translate(30 6) scale(10)" fill="none" fill-rule="evenodd" stroke="#22201c" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5">
+      <path fill="#fff" d="M22 10c10.5 1 16.5 8 16 29H15c0-9 10-6.5 8-21"/>
+      <path fill="#fff" d="M24 18c.38 2.91-5.55 7.37-8 9-3 2-2.82 4.34-5 4-1.042-.94 1.41-3.04 0-3-1 0 .19 1.23-1 2-1 0-4.003 1-4-4 0-2 6-12 6-12s1.89-1.9 2-3.5c-.73-.994-.5-2-.5-3 1-1 3 2.5 3 2.5h2s.78-1.992 2.5-3c1 0 1 3 1 3"/>
+      <path fill="#22201c" d="M9.5 25.5a.5.5 0 1 1-1 0 .5.5 0 1 1 1 0m5.433-9.75a.5 1.5 30 1 1-.866-.5.5 1.5 30 1 1 .866.5"/>
+    </g>
+  </g>
+
+  <g font-family="'Segoe UI', system-ui, -apple-system, Roboto, 'Helvetica Neue', Arial, sans-serif">
+    <text x="312" y="212" fill="#e8e4dd" font-size="104" font-weight="700" letter-spacing="-2">Chess</text>
+    <text x="316" y="262" fill="#a19a8f" font-size="28">Play in the browser — free play or vs Stockfish</text>
+    <text x="316" y="302" fill="#7fae8c" font-size="22" letter-spacing=".5">No build step · PHP + SQLite accounts · GPLv3</text>
+  </g>
+</svg>

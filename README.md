@@ -1,3 +1,5 @@
+<p align="center"><img src="img/banner.svg" alt="Chess" width="100%"></p>
+
 # Chess
 
 Browser chess: free play (both sides) or vs Stockfish, with optional accounts that save your games. No build step, no npm, no Composer.
@@ -45,7 +47,7 @@ JSON, session cookie, `X-Requested-With: chess` header required on writes.
 
 ## Licenses
 GPLv3 (`LICENSE`), required by Stockfish. Piece sets via lichess:
-- cburnett (Colin M.L. Burnett) – GPLv2+
+- cburnett (Colin M.L. Burnett) – GPLv2+ (knight also used in `img/logo.svg` / `img/banner.svg`)
 - merida (Armando Hernandez Marroquin) – GPLv2+
 - chessnut (Alexis Luengas) – Apache 2.0
 - fantasy, celtic, spatial (Maurizio Monge) – MIT
