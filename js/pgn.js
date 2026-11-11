@@ -20,7 +20,7 @@ export function replay(rec, upto = Infinity) {
 
 export function recordToPgn(rec) {
   const g = replay(rec);
-  g.setHeader('Event', rec.title || (rec.mode === 'bot' ? 'Game vs bot' : rec.mode === 'import' ? 'Imported game' : 'Casual game'));
+  g.setHeader('Event', rec.title || (rec.mode === 'bot' ? 'Game vs bot' : rec.mode === 'net' ? 'Online game' : rec.mode === 'import' ? 'Imported game' : 'Casual game'));
   g.setHeader('Site', location.host || 'local');
   g.setHeader('Date', rec.createdAt ? pgnDate(rec.createdAt) : '????.??.??');
   g.setHeader('White', rec.white || '?');
@@ -60,7 +60,7 @@ export function pgnToRecord(text) {
     if (g.isCheckmate()) result = g.turn() === 'w' ? '0-1' : '1-0';
     else if (g.isDraw()) result = '1/2-1/2';
   }
-  const title = h.Event && !['?', 'Casual game', 'Game vs bot', 'Imported game'].includes(h.Event) ? h.Event : '';
+  const title = h.Event && !['?', 'Casual game', 'Game vs bot', 'Online game', 'Imported game'].includes(h.Event) ? h.Event : '';
   return {
     startFen,
     moves: verbose.map(toUci),
@@ -98,7 +98,7 @@ export function parseImport(text) {
           moves: Array.isArray(r.moves) ? r.moves : String(r.moves || '').split(' ').filter(Boolean),
           result: ['1-0', '0-1', '1/2-1/2'].includes(r.result) ? r.result : '*',
           termination: String(r.termination || '').slice(0, 64),
-          mode: ['free', 'bot', 'import'].includes(r.mode) ? r.mode : 'import',
+          mode: ['free', 'bot', 'import', 'net'].includes(r.mode) ? r.mode : 'import',
           humanColor: r.humanColor === 'b' ? 'b' : 'w',
           botLevel: Number.isInteger(r.botLevel) ? r.botLevel : null,
           white: String(r.white || '').slice(0, 64),

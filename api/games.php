@@ -24,7 +24,7 @@ function clean_game(array $g): array
     $result = str_field($g, 'result', 7, '*');
     if (!in_array($result, ['1-0', '0-1', '1/2-1/2', '*'], true)) fail(400, 'Invalid result');
     $mode = str_field($g, 'mode', 8, 'free');
-    if (!in_array($mode, ['free', 'bot', 'import'], true)) fail(400, 'Invalid mode');
+    if (!in_array($mode, ['free', 'bot', 'import', 'net'], true)) fail(400, 'Invalid mode');
     $color = str_field($g, 'humanColor', 1, 'w');
     if (!in_array($color, ['w', 'b'], true)) fail(400, 'Invalid colour');
     $level = $g['botLevel'] ?? null;
