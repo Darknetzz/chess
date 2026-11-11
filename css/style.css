@@ -249,6 +249,15 @@ button {
   cursor: pointer;
 }
 button:hover:not(:disabled) { background: var(--btn-hover); }
+button:has(> .icon) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+button > .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Lucide icons */
+.icon { width: 1.15em; height: 1.15em; flex-shrink: 0; vertical-align: -0.2em; }
+button.link > .icon { width: 1em; height: 1em; }
+.account > .icon { color: var(--muted); }
+h2 > .icon, legend > .icon { margin-right: 6px; color: var(--accent); }
+.hint-text > .icon { color: var(--muted); }
 button:disabled { opacity: 0.45; cursor: default; }
 button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 

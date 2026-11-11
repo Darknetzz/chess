@@ -2,6 +2,7 @@
 /* global $ */
 import { store } from './store.js';
 import { recordToPgn, parseImport, exportJson, download, today } from './pgn.js';
+import { icon } from './icons.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const RESULT_TEXT = { '1-0': '1–0', '0-1': '0–1', '1/2-1/2': '½–½', '*': 'in progress' };
@@ -41,9 +42,9 @@ export function initLibrary({ onReplay, onDeleted, currentId, beforeOpen }) {
               <div class="game-sub muted">${esc(date)} · ${sub}</div>
             </div>
             <div class="game-actions">
-              <button type="button" data-act="replay">Replay</button>
-              <button type="button" data-act="pgn" title="Download PGN">PGN</button>
-              <button type="button" data-act="delete" title="Delete">✕</button>
+              <button type="button" data-act="replay">${icon('play')}<span class="lbl">Replay</span></button>
+              <button type="button" data-act="pgn" title="Download PGN">${icon('download')}<span class="lbl">PGN</span></button>
+              <button type="button" data-act="delete" title="Delete" aria-label="Delete">${icon('trash-2')}</button>
             </div>
           </div>`;
         })

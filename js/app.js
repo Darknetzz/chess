@@ -10,6 +10,9 @@ import { recordToPgn, pgnToRecord, toUci, fromUci, download, today } from './pgn
 import { initSettingsUi } from './settings-ui.js';
 import { initAccount } from './account.js';
 import { initLibrary } from './library.js';
+import { hydrateIcons, setButton } from './icons.js';
+
+hydrateIcons();
 
 const STATE_KEY = 'chess.state.v2';
 const OLD_STATE_KEY = 'chess.state.v1';
@@ -438,14 +441,14 @@ function continueFromHere() {
 function stopAutoplay() {
   clearTimeout(autoplayTimer);
   autoplayTimer = null;
-  $('#autoplay').text('▶ Play');
+  setButton($('#autoplay'), 'play', 'Play');
 }
 
 function toggleAutoplay() {
   if (!state.replay) return;
   if (autoplayTimer) return stopAutoplay();
   if (atEnd()) goTo(0);
-  $('#autoplay').text('⏸ Pause');
+  setButton($('#autoplay'), 'pause', 'Pause');
   const step = () => {
     if (!state.replay || atEnd()) return stopAutoplay();
     goTo(state.ply + 1);
@@ -564,10 +567,10 @@ function update() {
     const sp = String(s.autoplaySpeed);
     if (!$(`#autoplay-speed option[value="${sp}"]`).length) $('#autoplay-speed').append(`<option value="${sp}">${sp} s</option>`);
     $('#autoplay-speed').val(sp);
-    $('#replay-continue').text(r.result === '*' && atEnd() ? 'Resume game' : 'Continue from here');
+    setButton($('#replay-continue'), null, r.result === '*' && atEnd() ? 'Resume game' : 'Continue from here');
   }
   $('#resign').prop('disabled', !inProgress());
-  $('#coords').text(COORD_LABELS[s.coordMode]);
+  setButton($('#coords'), null, COORD_LABELS[s.coordMode]);
   $('#undo, #first').prop('disabled', state.ply === 0);
   $('#redo, #last').prop('disabled', atEnd());
   refreshAnalysis();
