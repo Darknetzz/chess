@@ -11,8 +11,8 @@ export function setPieceSet(set) {
   pieceSet = set;
 }
 
-export function pieceUrl(color, type) {
-  return `img/pieces/${pieceSet}/${color}${type.toUpperCase()}.svg`;
+export function pieceUrl(color, type, set = pieceSet) {
+  return `img/pieces/${set}/${color}${type.toUpperCase()}.svg`;
 }
 
 export class Board {

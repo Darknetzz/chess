@@ -339,6 +339,36 @@ dialog .group { margin-bottom: 8px; }
 .piece-preview { display: flex; gap: 2px; padding: 4px; border-radius: 6px; background: var(--light); }
 .piece-preview img { width: 16.6%; aspect-ratio: 1; }
 
+/* Dropdowns with visual previews (js/preview-select.js) */
+.pselect-native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.pselect-btn, .pselect-opt { display: flex; align-items: center; gap: 8px; text-align: left; }
+.pselect-btn { width: 100%; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+.pselect-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
+.pselect-btn .pselect-label { flex: 1; }
+.pselect-chev { width: 8px; height: 8px; margin: -4px 4px 0 0; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); opacity: 0.7; }
+.pselect-list {
+  position: fixed; inset: auto; margin: 0; padding: 4px;
+  max-height: min(320px, 70vh); overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); color: var(--text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+.pselect-opt { padding: 6px 8px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+.pselect-opt.active { background: var(--btn-hover); }
+.pselect-opt[aria-selected="true"] { box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
+.pselect-preview { display: inline-flex; flex: none; }
+.pv-checker {
+  width: 22px; height: 22px; border-radius: 4px; outline: 1px solid rgba(0, 0, 0, 0.15);
+  background: conic-gradient(var(--d) 0 25%, var(--l) 0 50%, var(--d) 0 75%, var(--l) 0) 0 0 / 22px 22px;
+}
+.pv-pieces { display: flex; padding: 1px 3px; border-radius: 4px; background: var(--light); }
+.pv-pieces img { width: 22px; height: 22px; }
+.pv-coords { width: 22px; height: 22px; border-radius: 4px; font: 700 4.4px system-ui, sans-serif; }
+.pv-ui { display: grid; place-items: center; width: 34px; height: 22px; border-radius: 4px; border: 1px solid var(--border); font-size: 11px; font-weight: 600; }
+.pv-ui-light { background: #f4f1ec; color: #22201c; }
+.pv-ui-dark { background: #1d1c1a; color: #e8e4dd; }
+.pv-ui-system { background: linear-gradient(135deg, #f4f1ec 50%, #1d1c1a 50%); color: #888; }
+
 /* Saved games */
 .games-toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
 .import-box { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }

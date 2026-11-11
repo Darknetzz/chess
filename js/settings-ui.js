@@ -2,6 +2,7 @@
 /* global $ */
 import { BOARD_THEMES, PIECE_SETS, DEFAULTS, boardColors } from './settings.js';
 import { pieceUrl } from './board.js';
+import { enhanceSelect } from './preview-select.js';
 
 const GAME_KEYS = ['mode', 'side', 'level', 'orientation'];
 
@@ -16,6 +17,8 @@ export function initSettingsUi({ get, onChange }) {
 
   $form.find('[name=boardTheme]').html(Object.entries(BOARD_THEMES).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join(''));
   $form.find('[name=pieceSet]').html(Object.entries(PIECE_SETS).map(([k, label]) => `<option value="${k}">${label}</option>`).join(''));
+
+  const pickers = Object.entries(previewRenderers(get)).map(([name, render]) => enhanceSelect($form.find(`[name=${name}]`)[0], render));
 
   function fill() {
     const s = get();
@@ -36,6 +39,7 @@ export function initSettingsUi({ get, onChange }) {
     $('#piece-preview').html(
       ['wK', 'wQ', 'wN', 'bK', 'bQ', 'bN'].map((p) => `<img src="${pieceUrl(p[0], p[1].toLowerCase())}" alt="">`).join(''),
     );
+    pickers.forEach((p) => p.refresh());
   }
 
   $form.on('input change', '[name]', (e) => {
@@ -70,5 +74,37 @@ export function initSettingsUi({ get, onChange }) {
       $modal[0].showModal();
     },
     message: (text) => $('#settings-msg').text(text),
+  };
+}
+
+/** Small visual previews for the dropdown pickers, keyed by setting name. */
+function previewRenderers(get) {
+  const checker = (light, dark) => `<span class="pv-checker" style="--l:${light};--d:${dark}"></span>`;
+  return {
+    boardTheme(k) {
+      const t = BOARD_THEMES[k];
+      const s = get();
+      return t?.light ? checker(t.light, t.dark) : checker(s.lightColor, s.darkColor);
+    },
+    pieceSet(set) {
+      return `<span class="pv-pieces">${['wK', 'wN', 'bQ'].map((p) => `<img src="${pieceUrl(p[0], p[1].toLowerCase(), set)}" alt="">`).join('')}</span>`;
+    },
+    coordMode(mode) {
+      const { light, dark } = boardColors(get());
+      let svg = '';
+      for (let r = 0; r < 2; r++) {
+        for (let f = 0; f < 2; f++) {
+          const isLight = (r + f) % 2 === 0;
+          const fill = isLight ? dark : light;
+          svg += `<rect x="${f * 8}" y="${r * 8}" width="8" height="8" fill="${isLight ? light : dark}"/>`;
+          if (mode === 'all' || (mode === 'edge' && f === 0)) svg += `<text x="${f * 8 + 0.8}" y="${r * 8 + 4.2}" fill="${fill}">${2 - r}</text>`;
+          if (mode === 'all' || (mode === 'edge' && r === 1)) svg += `<text x="${f * 8 + 7.3}" y="${r * 8 + 7.5}" fill="${fill}" text-anchor="end">${'ab'[f]}</text>`;
+        }
+      }
+      return `<svg class="pv-coords" viewBox="0 0 16 16" aria-hidden="true">${svg}</svg>`;
+    },
+    uiTheme(mode) {
+      return `<span class="pv-ui pv-ui-${mode}"><span>Aa</span></span>`;
+    },
   };
 }
