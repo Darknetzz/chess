@@ -312,8 +312,13 @@ async function handle(req, res) {
   }
   if (!id) return send(res, 201, create(await readJson(req), req));
   const g = needGame(id);
-  if (!action) return send(res, 200, state(g));
-  if (action === 'wait') return send(res, 200, await wait(g, url, res));
+  if (want === 'GET') {
+    // Optional "Authorization: Bearer <token>" adds "you": the side that token plays.
+    const bearer = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization || '')?.[1];
+    const you = bearer ? { you: SIDE[authSide(g, bearer)] } : {};
+    const s = action === 'wait' ? await wait(g, url, res) : state(g);
+    return send(res, 200, { ...s, ...you });
+  }
   const body = await readJson(req);
   return send(res, 200, action === 'move' ? move(g, body) : resign(g, body));
 }

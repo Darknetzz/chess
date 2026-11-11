@@ -11,6 +11,7 @@ import { initSettingsUi } from './settings-ui.js';
 import { initAccount } from './account.js';
 import { initLibrary } from './library.js';
 import { hydrateIcons, setButton } from './icons.js';
+import { remoteFromUrl, botApi } from './botgame.js';
 
 hydrateIcons();
 
@@ -49,9 +50,12 @@ let engineError = null;
 let saveError = null;
 let pendingAnim = null;
 let autoplayTimer = null;
+// Server-refereed bot API game (?game=<id>[#token=<t>]): { id, token, side, server, busy, error }. Saves are off.
+const remote = remoteFromUrl();
+if (remote) Object.assign(remote, { side: null, server: null, busy: false, error: null });
 
 const opposite = (c) => (c === 'w' ? 'b' : 'w');
-const isBot = () => state.settings.mode === 'bot' && !state.replay;
+const isBot = () => state.settings.mode === 'bot' && !state.replay && !remote;
 const startTurn = () => state.startFen.split(' ')[1];
 const turnAt = (ply) => (ply % 2 === 0 ? startTurn() : opposite(startTurn()));
 const atEnd = () => state.ply === state.history.length;
@@ -76,7 +80,7 @@ function outcomeOf(g, resigned) {
   return { result: '*', termination: '' };
 }
 
-const isOver = () => game.isGameOver() || (!!state.resigned && atEnd());
+const isOver = () => (remote ? remote.server?.status !== 'ongoing' : game.isGameOver() || (!!state.resigned && atEnd()));
 
 // ---- Persistence of the live game -------------------------------------------
 function liveSnapshot() {
@@ -85,6 +89,7 @@ function liveSnapshot() {
 }
 
 function persist() {
+  if (remote) return;
   try {
     const s = state.replay ? state.replay.live : liveSnapshot();
     const data = { ...s, history: s.history.map(({ from, to, promotion }) => ({ from, to, promotion })) };
@@ -130,6 +135,10 @@ let saveChain = Promise.resolve();
 const idsByToken = new Map();
 
 function playerNames() {
+  if (remote) {
+    const n = (c) => COLOR_NAME[c] + (remote.side === c ? ' (you)' : '');
+    return { white: n('w'), black: n('b') };
+  }
   const me = api.user?.username || 'Player';
   if (state.settings.mode !== 'bot') return { white: me, black: me };
   const bot = `Stockfish (level ${state.settings.level})`;
@@ -164,7 +173,7 @@ const saveSig = () => `${state.gameToken}|${state.history.map(toUci).join(' ')}|
 let storeReady = false; // set once we know whether saves go to the account or this browser
 
 function scheduleSave() {
-  if (!storeReady || state.replay || !state.history.length) return;
+  if (!storeReady || remote || state.replay || !state.history.length) return;
   if (saveSig() === savedSig) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flushSave, 600);
@@ -174,7 +183,7 @@ function scheduleSave() {
 function flushSave() {
   clearTimeout(saveTimer);
   saveTimer = null;
-  if (storeReady && !state.replay && state.history.length && saveSig() !== savedSig) {
+  if (storeReady && !remote && !state.replay && state.history.length && saveSig() !== savedSig) {
     const sig = saveSig();
     const rec = liveRecord();
     const token = state.gameToken;
@@ -213,6 +222,7 @@ function startNewIdentity(id = null, createdAt = null) {
 const board = new Board($('#board'), {
   getMoves: (square) => game.moves({ square, verbose: true }),
   onMove: (from, to, promotion, dragged) => {
+    if (remote) return remoteMove({ from, to, promotion }, !dragged);
     if (playMove({ from, to, promotion }, !dragged)) maybeBotMove();
   },
 });
@@ -229,6 +239,7 @@ function kingSquare(color) {
 }
 
 function movableColor() {
+  if (remote) return remote.side && !remote.busy && !isOver() && atEnd() && game.turn() === remote.side ? remote.side : null;
   if (state.replay || isOver()) return null;
   if (!isBot()) return 'both';
   if (thinking) return null;
@@ -364,6 +375,7 @@ function newGame(fen = DEFAULT_POSITION, history = []) {
 }
 
 function resign() {
+  if (remote) return remoteResign();
   if (!inProgress()) return;
   cancelBot();
   if (!atEnd()) goTo(state.history.length);
@@ -460,6 +472,7 @@ function toggleAutoplay() {
 // ---- Rendering -------------------------------------------------------------
 function statusText() {
   if (engineError) return engineError;
+  if (remote) return remoteStatus();
   let s;
   if (state.replay) {
     const r = state.replay.rec;
@@ -569,7 +582,8 @@ function update() {
     $('#autoplay-speed').val(sp);
     setButton($('#replay-continue'), null, r.result === '*' && atEnd() ? 'Resume game' : 'Continue from here');
   }
-  $('#resign').prop('disabled', !inProgress());
+  $('#resign').prop('disabled', remote ? !remote.side || isOver() : !inProgress());
+  if (remote) $('#mode').closest('label').add('.bot-only').prop('hidden', true);
   setButton($('#coords'), null, COORD_LABELS[s.coordMode]);
   $('#undo, #first').prop('disabled', state.ply === 0);
   $('#redo, #last').prop('disabled', atEnd());
@@ -797,6 +811,7 @@ function toggleAnalysis() {
 }
 
 function askNewGame() {
+  if (remote) return location.assign(location.pathname);
   if (confirmIf(inProgress(), 'Abandon the current game and start a new one? (It stays in My games.)')) newGame();
 }
 
@@ -881,8 +896,147 @@ $(document).on('keydown', (e) => {
 
 window.addEventListener('pagehide', () => flushSave());
 
+// ---- Bot API game (server is the referee) ---------------------------------------
+const REASON_TEXT = { threefold: 'threefold repetition', fifty_move: '50-move rule', insufficient_material: 'insufficient material' };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function remoteEndText(s) {
+  const who = s.reason?.startsWith('black') ? 'Black' : 'White';
+  if (s.status === 'resigned') return `${who} resigned`;
+  if (s.status === 'timeout') return `${who} ran out of time`;
+  return REASON_TEXT[s.reason] || s.status;
+}
+
+function remoteStatus() {
+  const s = remote.server;
+  if (!s) return remote.error || `Loading game ${remote.id}…`;
+  const role = remote.side ? `You are ${COLOR_NAME[remote.side]}` : 'Spectating';
+  let t;
+  if (s.status === 'ongoing') {
+    const left = Math.max(0, Math.ceil((s.deadline_at - Date.now()) / 1000));
+    const mine = remote.side && s.turn[0] === remote.side;
+    t = `${mine ? 'Your move' : `${COLOR_NAME[s.turn[0]]} to move`}${s.in_check ? ' — check!' : ''} · ${left}s left`;
+  } else {
+    t = `${RESULT_TEXT[s.result] || s.result} — ${remoteEndText(s)}`;
+  }
+  let out = `${role} · ${t}`;
+  if (!atEnd()) out += ` · viewing move ${state.ply}/${state.history.length}`;
+  if (remote.error) out += ` · ${remote.error}`;
+  return out;
+}
+
+/** Bring the board in line with the server's state. */
+function applyServer(s) {
+  const prev = remote.server;
+  remote.server = s;
+  if (s.you && !remote.side) {
+    remote.side = s.you[0];
+    state.settings.orientation = remote.side;
+  }
+  const local = state.history.map(toUci);
+  const srv = s.moves.map((m) => m.uci);
+  const isPrefix = local.length <= srv.length && local.every((u, i) => u === srv[i]);
+  const following = atEnd();
+  if (isPrefix && srv.length === local.length) {
+    if (prev?.status === 'ongoing' && s.status !== 'ongoing' && state.settings.sound) playSound('end', state.settings.volume);
+    // Nothing moved: don't re-render the board (would cut a running move animation).
+    board.setMovable(movableColor());
+    $('#resign').prop('disabled', !remote.side || isOver());
+    return renderStatus();
+  }
+  if (isPrefix && following && srv.length === local.length + 1) return void playMove(fromUci(srv.at(-1)));
+  const g = new Chess(DEFAULT_POSITION);
+  state.startFen = DEFAULT_POSITION;
+  state.history = srv.map((u) => {
+    const r = g.move(fromUci(u));
+    return { from: r.from, to: r.to, promotion: r.promotion, san: r.san };
+  });
+  if (following || !isPrefix) state.ply = state.history.length;
+  rebuild();
+  update();
+}
+
+async function remoteMove(move, animate) {
+  remote.busy = true; // locks the board until the server answers
+  if (!playMove(move, animate)) {
+    remote.busy = false;
+    return update();
+  }
+  try {
+    const s = await botApi.move(remote.id, remote.token, toUci(state.history.at(-1)));
+    remote.error = null;
+    remote.busy = false;
+    applyServer(s);
+  } catch (err) {
+    remote.busy = false;
+    remote.error = `Move rejected: ${err.message}`;
+    await remoteResync();
+  }
+}
+
+async function remoteResign() {
+  if (!remote.side || isOver() || !confirmIf(true, `Resign as ${COLOR_NAME[remote.side]}?`)) return;
+  try {
+    applyServer(await botApi.resign(remote.id, remote.token));
+  } catch (err) {
+    remote.error = `Resign failed: ${err.message}`;
+    await remoteResync();
+  }
+}
+
+/** Full reload from the server (after a rejected action). */
+async function remoteResync() {
+  try {
+    const s = await botApi.get(remote.id, remote.token);
+    state.history = [];
+    state.ply = 0;
+    rebuild();
+    applyServer(s);
+  } catch (err) {
+    remote.error = err.message;
+    update();
+  }
+}
+
+async function remoteStart() {
+  state.startFen = DEFAULT_POSITION;
+  state.history = [];
+  state.ply = 0;
+  state.resigned = null;
+  rebuild();
+  setButton($('#new'), 'x', 'Leave game');
+  let s;
+  try {
+    s = await botApi.get(remote.id, remote.token);
+  } catch (err) {
+    if (err.status === 401 && remote.token) {
+      remote.token = null;
+      remote.error = 'Invalid token, spectating';
+      return remoteStart();
+    }
+    remote.error = err.status === 404 ? `Game ${remote.id} not found` : `Could not load game: ${err.message}`;
+    return update();
+  }
+  applyServer(s);
+  setInterval(() => remote.server?.status === 'ongoing' && renderStatus(), 1000);
+  let backoff = 1000;
+  while (remote.server.status === 'ongoing') {
+    try {
+      const next = await botApi.wait(remote.id, remote.server.ply, remote.token);
+      if (remote.error?.startsWith('Connection')) remote.error = null;
+      backoff = 1000;
+      if (!remote.busy) applyServer(next);
+    } catch (err) {
+      remote.error = `Connection lost (${err.message}), retrying…`;
+      renderStatus();
+      await sleep(backoff);
+      backoff = Math.min(backoff * 2, 15000);
+    }
+  }
+}
+
 // ---- Boot ------------------------------------------------------------------
-restore();
+if (!remote) restore();
 applySettings();
 rebuild();
 update();
@@ -905,3 +1059,4 @@ api.init().then((user) => {
   update();
   maybeBotMove();
 });
+if (remote) remoteStart();
