@@ -18,6 +18,7 @@ const COORD_LABELS = { off: 'Coords: off', edge: 'Coords: edges', all: 'Coords: 
 const VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 const START_COUNT = { p: 8, n: 2, b: 2, r: 2, q: 1 };
 const COLOR_NAME = { w: 'White', b: 'Black' };
+const BOT_PAUSE_MS = 350; // minimum gap between the player's move landing and the bot's reply
 const RESULT_TEXT = { '1-0': 'White wins', '0-1': 'Black wins', '1/2-1/2': 'Draw', '*': 'Unfinished' };
 
 const STOCKFISH_URL = new URL('../vendor/stockfish/stockfish-19-lite-single.js', import.meta.url);
@@ -273,11 +274,18 @@ function maybeBotMove() {
   if (!atEnd()) return; // don't overwrite a redo line
   const token = ++thinkToken;
   const fen = game.fen();
+  // Let the player's own slide finish and pause briefly so the reply is visible.
+  const minDelay = Settings.ANIMATION_MS[state.settings.animation] + BOT_PAUSE_MS;
+  const started = performance.now();
   thinking = true;
-  update();
+  // Don't re-render the board here: that would cut the player's move animation short.
+  board.setMovable(movableColor());
+  renderStatus();
   engine
     .bestMove(fen, state.settings.level)
-    .then((uci) => {
+    .then(async (uci) => {
+      const wait = minDelay - (performance.now() - started);
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
       if (token !== thinkToken) return;
       thinking = false;
       if (!uci) return update();

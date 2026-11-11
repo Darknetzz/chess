@@ -81,6 +81,12 @@ export class Board {
     else this._deselect();
   }
 
+  /** Change which side may move without re-rendering (keeps a running animation intact). */
+  setMovable(movable) {
+    this.state.movable = movable;
+    if (this.selected && !this._canMove(this.state.pieces[this.selected])) this._deselect();
+  }
+
   /** Replace the arrow overlay without re-rendering the squares. */
   setArrows(arrows) {
     this.state.arrows = arrows || [];
