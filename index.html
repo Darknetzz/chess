@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Chess</title>
   <meta name="color-scheme" content="light dark">
-  <link rel="icon" href="img/pieces/wN.svg" type="image/svg+xml">
+  <link rel="icon" href="img/pieces/cburnett/wN.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/style.css">
   <script src="https://cdn.jsdelivr.net/npm/jquery@4.0.0/dist/jquery.min.js"
           integrity="sha384-fgGyf7Mo7DURSOMnOy7ed+dkq5Job205Gnzu6QIg0BOHKaqt4D76Dt8VlDCzcMHV"
@@ -21,10 +21,37 @@
     </section>
 
     <aside class="panel">
-      <h1>Chess</h1>
+      <div class="titlebar">
+        <h1>Chess</h1>
+        <div class="account" id="account">
+          <span id="account-name" class="account-name"></span>
+          <button type="button" id="login-btn" class="link" hidden>Log in</button>
+          <button type="button" id="logout-btn" class="link" hidden>Log out</button>
+        </div>
+      </div>
       <p id="status" class="status" role="status" aria-live="polite">Loading…</p>
 
-      <div class="group">
+      <div class="replay-bar" id="replay-bar" hidden>
+        <div class="replay-title" id="replay-title"></div>
+        <div class="replay-controls">
+          <button type="button" id="autoplay" title="Play / pause (Space)">▶ Play</button>
+          <label class="inline">Speed
+            <select id="autoplay-speed">
+              <option value="0.5">0.5 s</option>
+              <option value="1">1 s</option>
+              <option value="1.5">1.5 s</option>
+              <option value="2">2 s</option>
+              <option value="3">3 s</option>
+            </select>
+          </label>
+        </div>
+        <div class="buttons">
+          <button type="button" id="replay-continue" title="Start a live game from this position">Continue from here</button>
+          <button type="button" id="replay-exit">Exit replay</button>
+        </div>
+      </div>
+
+      <div class="group live-only">
         <label>Mode
           <select id="mode">
             <option value="free">Free play (both sides)</option>
@@ -44,9 +71,10 @@
       </div>
 
       <div class="buttons">
-        <button type="button" id="new" title="New game (N)">New game</button>
+        <button type="button" id="new" class="live-only" title="New game (N)">New game</button>
+        <button type="button" id="resign" class="live-only" title="Resign">Resign</button>
         <button type="button" id="flip" title="Flip board (F)">Flip board</button>
-        <button type="button" id="coords" class="wide" title="Cycle coordinates (C)">Coordinates</button>
+        <button type="button" id="coords" title="Cycle coordinates (C)">Coordinates</button>
       </div>
 
       <div class="nav">
@@ -61,9 +89,11 @@
       <div class="buttons">
         <button type="button" id="fen-btn">FEN</button>
         <button type="button" id="pgn-btn">PGN</button>
+        <button type="button" id="games-btn" title="Saved games (G)">My games</button>
+        <button type="button" id="settings-btn" title="Settings (S)">Settings</button>
       </div>
 
-      <p class="hint-text">Keys: <kbd>F</kbd> flip · <kbd>C</kbd> coords · <kbd>N</kbd> new · <kbd>←</kbd>/<kbd>→</kbd> undo/redo</p>
+      <p class="hint-text">Keys: <kbd>F</kbd> flip · <kbd>C</kbd> coords · <kbd>N</kbd> new · <kbd>←</kbd>/<kbd>→</kbd> undo/redo · <kbd>G</kbd> games · <kbd>S</kbd> settings</p>
     </aside>
   </main>
 
@@ -76,6 +106,104 @@
       <button type="button" id="modal-download">Download</button>
       <button type="button" id="modal-load">Load</button>
       <button type="button" id="modal-close">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="login-modal">
+    <form id="login-form">
+      <h2>Log in</h2>
+      <div class="group">
+        <label>Username <input id="login-user" name="username" autocomplete="username" required minlength="3" maxlength="24" pattern="[A-Za-z0-9_\-]+"></label>
+        <label>Password <input id="login-pass" name="password" type="password" autocomplete="current-password" required minlength="8"></label>
+      </div>
+      <p id="login-error" class="modal-error"></p>
+      <div class="buttons three">
+        <button type="submit" id="login-submit" value="login">Log in</button>
+        <button type="submit" id="register-submit" value="register">Register</button>
+        <button type="button" id="login-close">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="games-modal" class="wide-dialog">
+    <h2>My games <small id="games-where" class="muted"></small></h2>
+    <div class="games-toolbar">
+      <button type="button" id="games-import">Import…</button>
+      <button type="button" id="games-export-pgn">Export all (PGN)</button>
+      <button type="button" id="games-export-json">Export all (JSON)</button>
+      <input type="file" id="games-file" accept=".pgn,.json,.txt,application/json,application/x-chess-pgn" hidden>
+    </div>
+    <div id="import-box" class="import-box" hidden>
+      <textarea id="import-text" rows="6" spellcheck="false" placeholder="Paste PGN (one or more games) or a JSON backup, or choose a file."></textarea>
+      <div class="buttons three">
+        <button type="button" id="import-file">Choose file…</button>
+        <button type="button" id="import-go">Import</button>
+        <button type="button" id="import-cancel">Cancel</button>
+      </div>
+    </div>
+    <p id="games-msg" class="modal-error"></p>
+    <div class="games-list" id="games-list"></div>
+    <div class="buttons one">
+      <button type="button" id="games-close">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="settings-modal" class="wide-dialog">
+    <h2>Settings</h2>
+    <form id="settings-form" class="settings">
+      <fieldset>
+        <legend>Board</legend>
+        <label>Theme <select name="boardTheme"></select></label>
+        <label class="custom-only">Light squares <input type="color" name="lightColor"></label>
+        <label class="custom-only">Dark squares <input type="color" name="darkColor"></label>
+        <label>Highlight <input type="color" name="highlightColor"></label>
+        <label>Pieces <select name="pieceSet"></select></label>
+        <div class="piece-preview" id="piece-preview"></div>
+        <label>Coordinates
+          <select name="coordMode">
+            <option value="off">Off</option>
+            <option value="edge">Board edges</option>
+            <option value="all">Every tile</option>
+          </select>
+        </label>
+        <label>Max board size <output id="size-out"></output>
+          <input type="range" name="boardSize" min="320" max="1200" step="20">
+        </label>
+      </fieldset>
+      <fieldset>
+        <legend>Motion &amp; sound</legend>
+        <label>Move animation
+          <select name="animation">
+            <option value="off">Off</option>
+            <option value="fast">Fast</option>
+            <option value="normal">Normal</option>
+            <option value="slow">Slow</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" name="sound"> Sounds</label>
+        <label>Volume <input type="range" name="volume" min="0" max="100" step="5"></label>
+        <label>Replay speed (s/move) <input type="number" name="autoplaySpeed" min="0.25" max="5" step="0.25"></label>
+      </fieldset>
+      <fieldset>
+        <legend>Behaviour</legend>
+        <label class="check"><input type="checkbox" name="showHints"> Show legal moves</label>
+        <label class="check"><input type="checkbox" name="showLastMove"> Highlight last move</label>
+        <label class="check"><input type="checkbox" name="showCheck"> Highlight check</label>
+        <label class="check"><input type="checkbox" name="autoQueen"> Always promote to queen</label>
+        <label class="check"><input type="checkbox" name="confirmActions"> Confirm new game / resign</label>
+        <label>Appearance
+          <select name="uiTheme">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+      </fieldset>
+    </form>
+    <p id="settings-msg" class="modal-error"></p>
+    <div class="buttons">
+      <button type="button" id="settings-reset">Reset to defaults</button>
+      <button type="button" id="settings-close">Close</button>
     </div>
   </dialog>
 

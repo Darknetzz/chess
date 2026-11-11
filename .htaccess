@@ -1,4 +1,5 @@
-# Apache 2.4 config for the chess app (requires AllowOverride FileInfo Indexes).
+# Apache 2.4 config for the chess app (requires AllowOverride FileInfo Indexes AuthConfig Limit).
+# PHP 8.5 with pdo_sqlite must handle api/*.php; the SQLite DB lives in data/ (or $DATA_DIR).
 AddType application/wasm .wasm
 AddType image/svg+xml .svg
 AddType text/javascript .js
@@ -20,6 +21,8 @@ Options -Indexes
 </IfModule>
 
 # Don't serve deployment files if the whole repo is copied into the docroot.
-<FilesMatch "^(Dockerfile|compose\.yaml|nginx\.conf|\.dockerignore|\.gitignore|README\.md)$">
+<FilesMatch "^(Dockerfile|compose\.yaml|nginx\.conf|\.dockerignore|\.gitignore|README\.md)$|\.(sqlite|sqlite-wal|sqlite-shm)$">
     Require all denied
 </FilesMatch>
+
+RedirectMatch 404 ^/(.*/)?data/

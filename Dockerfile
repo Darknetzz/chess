@@ -1,11 +1,22 @@
-FROM nginx:1.30-alpine
+FROM php:8.5.12-apache
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY index.html /usr/share/nginx/html/
-COPY css /usr/share/nginx/html/css
-COPY js /usr/share/nginx/html/js
-COPY img /usr/share/nginx/html/img
-COPY vendor /usr/share/nginx/html/vendor
+# mod_headers/deflate for .htaccess caching + compression; allow .htaccess overrides.
+RUN a2enmod headers deflate \
+ && sed -ri 's!AllowOverride None!AllowOverride All!' /etc/apache2/apache2.conf \
+ && mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini" \
+ && echo 'ServerTokens Prod' > /etc/apache2/conf-enabled/zz-hardening.conf \
+ && echo 'ServerSignature Off' >> /etc/apache2/conf-enabled/zz-hardening.conf \
+ && echo 'expose_php = Off' > "$PHP_INI_DIR/conf.d/zz-chess.ini" \
+ && mkdir -p /data && chown www-data:www-data /data
 
+COPY --chown=www-data:www-data index.html .htaccess /var/www/html/
+COPY --chown=www-data:www-data css /var/www/html/css
+COPY --chown=www-data:www-data js /var/www/html/js
+COPY --chown=www-data:www-data img /var/www/html/img
+COPY --chown=www-data:www-data vendor /var/www/html/vendor
+COPY --chown=www-data:www-data api /var/www/html/api
+
+ENV DATA_DIR=/data
+VOLUME /data
 EXPOSE 80
-HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://127.0.0.1/ >/dev/null || exit 1
+HEALTHCHECK --interval=30s --timeout=3s CMD curl -fsS http://127.0.0.1/api/auth.php?a=me >/dev/null || exit 1

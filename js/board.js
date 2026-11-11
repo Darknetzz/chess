@@ -4,8 +4,15 @@
 const FILES = 'abcdefgh';
 const PIECE_NAMES = { p: 'Pawn', n: 'Knight', b: 'Bishop', r: 'Rook', q: 'Queen', k: 'King' };
 
+let pieceSet = 'cburnett';
+
+/** Select the piece set folder under img/pieces/. */
+export function setPieceSet(set) {
+  pieceSet = set;
+}
+
 export function pieceUrl(color, type) {
-  return `img/pieces/${color}${type.toUpperCase()}.svg`;
+  return `img/pieces/${pieceSet}/${color}${type.toUpperCase()}.svg`;
 }
 
 export class Board {
@@ -13,11 +20,13 @@ export class Board {
    * @param {jQuery} $root container element
    * @param {object} opts
    *   getMoves(square) -> verbose legal moves from that square
-   *   onMove(from, to, promotion) -> called when the user makes a legal move
+   *   onMove(from, to, promotion, dragged) -> called when the user makes a legal move
+   * render() state also takes: autoQueen (skip the promotion picker),
+   *   animate ({ from, to, ms } slide the piece that just landed on `to`)
    */
   constructor($root, opts) {
     this.opts = opts;
-    this.state = { pieces: {}, orientation: 'w', coordMode: 'edge', lastMove: null, checkSquare: null, movable: null };
+    this.state = { pieces: {}, orientation: 'w', coordMode: 'edge', lastMove: null, checkSquare: null, movable: null, autoQueen: false };
     this.selected = null;
     this.targets = new Map(); // dest square -> [verbose moves]
     this.drag = null;
@@ -32,7 +41,8 @@ export class Board {
 
   /** Merge new state and re-render. */
   render(partial = {}) {
-    Object.assign(this.state, partial);
+    const { animate, ...rest } = partial;
+    Object.assign(this.state, rest);
     const { pieces, orientation, coordMode, lastMove, checkSquare } = this.state;
     const ranks = orientation === 'w' ? [8, 7, 6, 5, 4, 3, 2, 1] : [1, 2, 3, 4, 5, 6, 7, 8];
     const files = orientation === 'w' ? [...FILES] : [...FILES].reverse();
@@ -61,10 +71,31 @@ export class Board {
       });
     });
     this.$board.html(html);
+    if (animate?.ms > 0) this._animate(animate);
 
     // Keep a valid selection across re-renders (e.g. coord toggle / flip mid-selection).
     if (this.selected && this._canMove(pieces[this.selected])) this._select(this.selected);
     else this._deselect();
+  }
+
+  /** FLIP: draw the moved piece at its origin square, then transition it home. */
+  _animate({ from, to, ms }) {
+    const $from = this._$sq(from);
+    const $piece = this._$sq(to).children('.piece');
+    if (!$from.length || !$piece.length) return;
+    const a = $from[0].getBoundingClientRect();
+    const b = $piece[0].getBoundingClientRect();
+    const el = $piece[0];
+    el.style.transition = 'none';
+    el.style.transform = `translate(${a.left - b.left}px, ${a.top - b.top}px)`;
+    el.style.zIndex = '5';
+    void el.offsetWidth; // force reflow so the start position sticks
+    el.style.transition = `transform ${ms}ms ease-out`;
+    el.style.transform = '';
+    setTimeout(() => {
+      el.style.transition = '';
+      el.style.zIndex = '';
+    }, ms + 20);
   }
 
   _canMove(piece) {
@@ -100,19 +131,19 @@ export class Board {
     this._clearHints();
   }
 
-  async _tryMove(from, to) {
+  async _tryMove(from, to, dragged = false) {
     const moves = this.targets.get(to);
     if (!moves) return false;
     let promotion;
     if (moves.some((m) => m.promotion)) {
-      promotion = await this._askPromotion(moves[0].color, to);
+      promotion = this.state.autoQueen ? 'q' : await this._askPromotion(moves[0].color, to);
       if (!promotion) {
         this._deselect();
         return false;
       }
     }
     this._deselect();
-    this.opts.onMove(from, to, promotion);
+    this.opts.onMove(from, to, promotion, dragged);
     return true;
   }
 
@@ -188,7 +219,7 @@ export class Board {
       const el = document.elementFromPoint(ev.clientX, ev.clientY);
       const to = el && $(el).closest('.sq').data('sq');
       if (to && to !== from && this.targets.has(to)) {
-        this._tryMove(from, to);
+        this._tryMove(from, to, true);
       } else if (to === from && wasSelected && !moved) {
         this._deselect(); // second click on the same piece toggles selection off
       }

@@ -1,8 +1,10 @@
 .git
 .gitignore
 .dockerignore
-.htaccess
+.claude
+data
 Dockerfile
 compose.yaml
+nginx.conf
 README.md
 LICENSE
