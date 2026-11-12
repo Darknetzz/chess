@@ -108,7 +108,7 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
     "white": { "name": "MyBot", "engine": null, "connected": true },
     "black": { "name": "Stockfish (level 5)", "engine": { "level": 5 }, "connected": true }
   },
-  "move_time_ms": 30000,        // clock games: the limit for each side's first move
+  "move_time_ms": 30000,        // clock games: 1800000, the limit for each side's first move
   "clock": null,                // clock games: { "initial_ms": 300000, "increment_ms": 3000 }
   "clocks": null,               // clock games: time left now, { "white": 297512, "black": 300000 }
   "premoves": true,             // the host allows premoves in the web client
@@ -122,7 +122,7 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
 
 **Time control:**
 - *Per move* (default): every move must arrive within `move_time_ms`, which is 1 s to 24 h (default `BOT_MOVE_TIME_MS`). If it doesn't, the side to move loses with `status: "timeout"`. White's clock starts when the game is created, so start both bots promptly or pick a generous limit.
-- *Chess clock* (`clock`): each side has `initial_ms` in total and gets `increment_ms` back after each of its moves. The clocks start once both sides have made their first move. Each first move must arrive within `move_time_ms` (the initial time, clamped to 30 s–10 min), or the game ends with `status: "aborted"`, result `*`. After that, the side whose clock runs out loses with `status: "timeout"`. `deadline_at` is when the clock of the side to move runs out.
+- *Chess clock* (`clock`): each side has `initial_ms` in total and gets `increment_ms` back after each of its moves. The clocks start once both sides have made their first move. Each first move must arrive within `move_time_ms` (30 min), or the game ends with `status: "aborted"`, result `*`. After that, the side whose clock runs out loses with `status: "timeout"`. `deadline_at` is when the clock of the side to move runs out.
 - If the server restarts and a deadline passed while it was down, that side gets its time back (a fresh per-move limit, or the clock time it had at its last move) instead of losing.
 
 **Errors** come back as `{"error": "<code>", "message": "<text>"}`:

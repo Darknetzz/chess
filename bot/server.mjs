@@ -18,8 +18,7 @@ const MAX_MOVE_MS = 86_400_000;
 const CLOCK_MIN_MS = 15_000;
 const CLOCK_MAX_MS = 10_800_000;
 const INCREMENT_MAX_MS = 180_000;
-const FIRST_MOVE_MIN_MS = 30_000; // clock games: limit for each side's first move (clocks start after both)
-const FIRST_MOVE_MAX_MS = 600_000;
+const FIRST_MOVE_MS = 1_800_000; // clock games: limit for each side's first move (clocks start after both)
 const DEFAULT_MOVE_MS = Math.min(MAX_MOVE_MS, Math.max(MIN_MOVE_MS, envInt('BOT_MOVE_TIME_MS', 30_000)));
 const CREATE_PER_HOUR = envInt('BOT_CREATE_PER_HOUR', 30);
 const PROXY_HOPS = Number.isInteger(+process.env.BOT_PROXY_HOPS) ? +process.env.BOT_PROXY_HOPS : 1;
@@ -362,7 +361,7 @@ function create(body, req) {
     clock = { initial: c.initial_ms, inc };
   }
   // Clock games: move_time_ms is the limit for each side's first move.
-  let ms = clock ? Math.min(FIRST_MOVE_MAX_MS, Math.max(FIRST_MOVE_MIN_MS, clock.initial)) : (body.move_time_ms ?? DEFAULT_MOVE_MS);
+  let ms = clock ? FIRST_MOVE_MS : (body.move_time_ms ?? DEFAULT_MOVE_MS);
   if (!Number.isInteger(ms) || ms < MIN_MOVE_MS || ms > MAX_MOVE_MS) {
     throw err(400, 'invalid_move_time', `move_time_ms must be an integer between ${MIN_MOVE_MS} and ${MAX_MOVE_MS}`);
   }
