@@ -7,12 +7,25 @@
   <meta name="color-scheme" content="light dark">
   <link rel="icon" href="img/logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/style.css">
+  <script>
+    // Apply a forced light/dark theme before first paint so the loader doesn't flash the wrong colours.
+    try {
+      const t = JSON.parse(localStorage.getItem('chess.settings.v1') || 'null')?.uiTheme;
+      if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+    } catch {}
+    // Safety net: never leave the loader up if the app fails to start.
+    setTimeout(() => document.getElementById('loader')?.classList.add('done'), 10000);
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/jquery@4.0.0/dist/jquery.min.js"
           integrity="sha384-fgGyf7Mo7DURSOMnOy7ed+dkq5Job205Gnzu6QIg0BOHKaqt4D76Dt8VlDCzcMHV"
           crossorigin="anonymous"></script>
   <script type="module" src="js/app.js"></script>
 </head>
 <body>
+  <div id="loader" class="loader" role="status" aria-label="Loading">
+    <img src="img/logo.svg" alt="" width="72" height="72">
+    <span class="spinner"></span>
+  </div>
   <main class="layout">
     <section class="play">
       <div class="player-row"><div class="captured" id="captured-top"></div><span class="clock" id="clock-top" hidden></span></div>

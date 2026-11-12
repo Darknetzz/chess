@@ -1562,9 +1562,11 @@ async function remoteStart() {
       return remoteStart();
     }
     remote.error = err.status === 404 ? `Game ${remote.id} not found` : `Could not load game: ${err.message}`;
-    return update();
+    update();
+    return hideLoader();
   }
   applyServer(s);
+  hideLoader();
   if (joinedByLink && remote.side && s.status === 'ongoing') {
     // Invite opened: pick a name unless this side already has one (then just the fair-play note).
     if (s.players?.[remote.side === 'w' ? 'white' : 'black']?.name) fairPlayOnce();
@@ -1675,6 +1677,14 @@ $('#name-form').on('submit', async (e) => {
 $('#net-players').on('click', '.rename', () => askName(false));
 
 // ---- Boot ------------------------------------------------------------------
+function hideLoader() {
+  const el = document.getElementById('loader');
+  if (!el || el.classList.contains('done')) return;
+  // The board is already rendered; the fade covers its first paint.
+  el.classList.add('done');
+  setTimeout(() => el.remove(), 300);
+}
+
 if (!remote) restore();
 applySettings();
 rebuild();
@@ -1697,8 +1707,10 @@ api.init().then((user) => {
   update();
   maybeBotMove();
   if (remote) maybeSaveNet();
+}).finally(() => {
+  if (!remote) hideLoader(); // account settings (board theme etc.) applied first
 });
-if (remote) remoteStart();
+if (remote) remoteStart(); // hides the loader once the game is fetched
 else if (location.hash === '#analysis') {
   // "Analysis board" chosen while in an online game: fresh local board.
   history.replaceState(null, '', location.pathname);
