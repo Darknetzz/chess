@@ -301,6 +301,8 @@ button > .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; 
 button.link > .icon { width: 1em; height: 1em; }
 .account > .icon { color: var(--muted); }
 h2 > .icon, legend > .icon { margin-right: 6px; color: var(--accent); }
+.ttl { display: inline-flex; align-items: center; gap: 6px; }
+.ttl > .icon { color: var(--accent); }
 .hint-text > .icon { color: var(--muted); }
 button:disabled { opacity: 0.45; cursor: default; }
 button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

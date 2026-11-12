@@ -114,26 +114,26 @@
       <h2><i data-icon="square-plus"></i>New game</h2>
       <div class="group">
         <fieldset id="ng-opponent" class="tiles">
-          <legend>Opponent</legend>
+          <legend><i data-icon="swords"></i>Opponent</legend>
           <label class="tile"><input type="radio" name="opponent" value="human" checked><i data-icon="users"></i><b>Human</b><small>Send an invite link</small></label>
           <label class="tile"><input type="radio" name="opponent" value="stockfish"><i data-icon="cpu"></i><b>Stockfish</b><small>Runs in this browser</small></label>
           <label class="tile"><input type="radio" name="opponent" value="bot"><i data-icon="bot"></i><b>External bot</b><small>Get an API token</small></label>
           <label class="tile"><input type="radio" name="opponent" value="analysis"><i data-icon="microscope"></i><b>Analysis board</b><small>Local, both sides, undo</small></label>
         </fieldset>
-        <label class="ng-online">Your name
+        <label class="ng-online"><span class="ttl"><i data-icon="user-pen"></i>Your name</span>
           <input id="ng-name" maxlength="40" autocomplete="nickname" placeholder="Shown next to your colour">
         </label>
-        <label class="ng-online">You play
+        <label class="ng-online"><span class="ttl"><i data-icon="chess-king"></i>You play</span>
           <select id="ng-side">
             <option value="w">White</option>
             <option value="b">Black</option>
             <option value="random">Random</option>
           </select>
         </label>
-        <label class="ng-stockfish">Stockfish level <output id="ng-level-out">5</output>
+        <label class="ng-stockfish"><span class="ttl"><i data-icon="gauge"></i>Stockfish level <output id="ng-level-out">5</output></span>
           <input id="ng-level" type="range" min="0" max="20" step="1" value="5">
         </label>
-        <label class="ng-online">Time control
+        <label class="ng-online"><span class="ttl"><i data-icon="timer"></i>Time control</span>
           <select id="ng-tc">
             <optgroup label="Chess clock (minutes + seconds per move)">
               <option value="1+0">1 + 0 · Bullet</option>
@@ -159,7 +159,7 @@
         <p class="ng-online ng-clock-note muted">Clocks start once both sides have made their first move; a side that doesn't make its first move in time aborts the game.</p>
         <label class="ng-online check"><input type="checkbox" id="ng-premoves"> Allow premoves (queue moves during the opponent's turn)</label>
         <label class="check"><input type="checkbox" id="ng-evalbar"> <span><span id="ng-evalbar-verb">Show</span> evaluation bar (winning chances; marks the game as assisted)</span></label>
-        <label class="ng-online ng-move">Time per move (running out loses)
+        <label class="ng-online ng-move"><span class="ttl"><i data-icon="hourglass"></i>Time per move (running out loses)</span>
           <select id="ng-time">
             <option value="30000">30 seconds</option>
             <option value="120000" selected>2 minutes</option>
