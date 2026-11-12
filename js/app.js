@@ -600,7 +600,7 @@ function renderCaptured(pieces) {
   const html = (c) =>
     ['q', 'r', 'b', 'n', 'p']
       .flatMap((t) => Array(Math.max(0, START_COUNT[t] - count[c][t])).fill(t))
-      .map((t) => `<img src="${pieceUrl(c, t)}" alt="${t}">`)
+      .map((t) => `<img class="cap-${c}" src="${pieceUrl(c, t)}" alt="${t}">`)
       .join('');
   const top = state.settings.orientation === 'w' ? 'b' : 'w';
   const bottom = opposite(top);
