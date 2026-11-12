@@ -1218,17 +1218,20 @@ function clockLeft(s, c) {
 
 function renderClocks() {
   const s = remote?.server;
-  const show = !!s?.clock;
+  const show = !!s && (!!s.clock || !!s.move_time_ms);
   $('#clock-top, #clock-bottom').prop('hidden', !show);
   if (!show) return;
   const top = state.settings.orientation === 'w' ? 'b' : 'w';
-  const lowAt = Math.min(20000, Math.max(10000, s.clock.initial_ms / 10));
+  // Per-move games: the side to move counts down its move (or first-move) deadline; the other shows the per-move allowance.
+  const perMove = !s.clock;
+  const lowAt = perMove ? Math.min(10000, s.move_time_ms / 3) : Math.min(20000, Math.max(10000, s.clock.initial_ms / 10));
   for (const [pos, c] of [['top', top], ['bottom', opposite(top)]]) {
-    const ms = clockLeft(s, c);
+    const toMove = s.status === 'ongoing' && s.turn[0] === c;
+    const active = toMove && (perMove ? s.joined_at != null : s.ply >= 2);
+    const ms = perMove ? (active ? Math.max(0, s.deadline_at - serverNow()) : s.move_time_ms) : clockLeft(s, c);
     const flagged = s.status === 'timeout' && s.reason === `${c === 'w' ? 'white' : 'black'}_timeout`;
-    const active = s.status === 'ongoing' && s.ply >= 2 && s.turn[0] === c;
-    $(`#clock-${pos}`).text(fmtClock(ms)).toggleClass('active', active).toggleClass('low', ms < lowAt && !flagged)
-      .toggleClass('flagged', flagged).attr('title', `${COLOR_NAME[c]}'s clock`);
+    $(`#clock-${pos}`).text(fmtClock(flagged ? 0 : ms)).toggleClass('active', active).toggleClass('low', (active || !perMove) && ms < lowAt && !flagged)
+      .toggleClass('flagged', flagged).attr('title', perMove ? `${COLOR_NAME[c]} · ${fmtClock(s.move_time_ms)} per move` : `${COLOR_NAME[c]}'s clock`);
   }
 }
 
@@ -1598,7 +1601,7 @@ async function remoteStart() {
     if (remote.server?.status !== 'ongoing') return;
     renderStatus();
     renderClocks();
-  }, remote.server?.clock ? 100 : 1000);
+  }, 100);
   let backoff = 1000;
   let engineSeen = 0;
   while (remote.server.status === 'ongoing') {
