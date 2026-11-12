@@ -4,3 +4,4 @@ Thumbs.db
 data/*
 !data/.htaccess
 version.json
+.env

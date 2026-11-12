@@ -7,3 +7,5 @@ compose.yaml
 nginx.conf
 README.md
 LICENSE
+.env
+.env.example

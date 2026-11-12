@@ -33,7 +33,7 @@ Browser chess against a friend (invite link), Stockfish or your own bot, all ref
 ```bash
 docker compose up -d --build
 ```
-Open http://localhost:8080. `.env` options:
+Open http://localhost:8080. `.env` options (all listed with defaults in `.env.example`; copy it to `.env`):
 - `CHESS_PORT` – host port (default 8080)
 - `CHESS_REGISTRATION_OPEN` – `false` to disable new sign-ups
 - `CHESS_BOT_MOVE_TIME_MS` – default per-move time limit for bot API games (default 30000)
