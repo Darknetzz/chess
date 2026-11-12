@@ -493,6 +493,12 @@ button[hidden] { display: none; }
 .net-players .tag { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); opacity: 0.5; flex: none; }
 .dot.on { background: #2ea043; opacity: 1; }
+.net-offers { display: flex; flex-direction: column; gap: 6px; }
+.net-offers[hidden] { display: none; }
+.net-offer { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 8px; border: 1px solid var(--accent); border-radius: 6px; font-size: 13px; }
+.net-offer > span { flex: 1 1 100%; }
+.net-offer > button { flex: 1; }
+.net-offer.mine { border-color: var(--border); color: var(--muted); }
 .net-share { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
 .copy-row { display: flex; gap: 4px; }
 .copy-row input { flex: 1; min-width: 0; font: 12px ui-monospace, monospace; }

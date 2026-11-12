@@ -1080,6 +1080,19 @@ $('#new').on('click', askNewGame);
 $('#confirm-move').on('click', confirmPending);
 $('#cancel-move').on('click', cancelPending);
 $('#resign').on('click', resign);
+$('#abort').on('click', () => {
+  if (!remote?.side || !confirmIf(true, 'Abort this game?')) return;
+  remoteAction(() => botApi.abort(remote.id, remote.token), 'Abort');
+});
+$('#draw-btn').on('click', () => {
+  if (!remote?.side || !confirmIf(true, 'Offer a draw?')) return;
+  remoteAction(() => botApi.draw(remote.id, remote.token, 'offer'), 'Draw offer');
+});
+$('#takeback-btn').on('click', () => remote?.side && remoteAction(() => botApi.takeback(remote.id, remote.token, 'request'), 'Takeback'));
+$('#net-offers').on('click', 'button[data-offer]', function () {
+  const { offer, act } = this.dataset;
+  remoteAction(() => botApi[offer](remote.id, remote.token, act), offer === 'draw' ? 'Draw' : 'Takeback');
+});
 $('#flip').on('click', flip);
 $('#coords').on('click', cycleCoords);
 $('#analysis-btn').on('click', toggleAnalysis);
@@ -1149,7 +1162,7 @@ $(document).on('keydown', (e) => {
 window.addEventListener('pagehide', () => flushSave());
 
 // ---- Bot API game (server is the referee) ---------------------------------------
-const REASON_TEXT = { threefold: 'threefold repetition', fifty_move: '50-move rule', insufficient_material: 'insufficient material' };
+const REASON_TEXT = { threefold: 'threefold repetition', fifty_move: '50-move rule', insufficient_material: 'insufficient material', agreement: 'by agreement' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const escHtml = (t) => String(t).replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
@@ -1244,22 +1257,105 @@ function renderNet() {
     $('#net-bot-cmd').val(`node bot/random_bot.mjs ${location.origin} ${remote.id} ${remote.botToken}`);
   }
   $('#net-watch-url').val(gameLink(remote.id));
+  renderNetActions();
+}
+
+/** Abort / draw / takeback buttons and the banner for pending offers (online games you play). */
+function renderNetActions() {
+  const s = remote?.server;
+  const playing = !!s && !!remote.side && s.status === 'ongoing' && !state.replay;
+  const me = remote?.side === 'w' ? 'white' : 'black';
+  const offers = (playing && s.offers) || {};
+  const early = playing && s.ply < 2;
+  if (remote) $('#resign').prop('hidden', !!state.replay || early);
+  $('#abort').prop('hidden', !early);
+  $('#draw-btn').prop('hidden', !playing || early).prop('disabled', offers.draw === me);
+  setButton($('#draw-btn'), null, offers.draw === me ? 'Draw offered' : 'Offer draw');
+  // A takeback needs a move of mine: the last ply when it's the opponent's turn, else the one before.
+  const canTakeBack = playing && s.ply >= (s.turn === me ? 2 : 1);
+  $('#takeback-btn').prop('hidden', !playing).prop('disabled', !canTakeBack || offers.takeback === me);
+  setButton($('#takeback-btn'), null, offers.takeback === me ? 'Takeback asked' : 'Takeback');
+  // The in-browser engine answers offers to its own side; only show the person's own pending offers then.
+  const rows = [];
+  const engine = !!netEngineSide();
+  for (const [kind, label] of [['draw', 'a draw'], ['takeback', 'a takeback']]) {
+    const by = offers[kind];
+    if (!by) continue;
+    if (by === me) rows.push(`<div class="net-offer mine"><span>You offered ${label}${engine ? ', Stockfish is deciding…' : ', waiting for the opponent'}</span></div>`);
+    else rows.push(`<div class="net-offer"><span>${by === 'white' ? 'White' : 'Black'} ${kind === 'draw' ? 'offers a draw' : 'asks for a takeback'}</span>`
+      + `<button type="button" data-offer="${kind}" data-act="accept">Accept</button><button type="button" data-offer="${kind}" data-act="decline">Decline</button></div>`);
+  }
+  $('#net-offers').html(rows.join('')).prop('hidden', !rows.length);
+}
+
+/** Send a player action (abort/draw/takeback) and show the result. */
+async function remoteAction(call, what) {
+  try {
+    const s = await call();
+    remote.error = null;
+    applyServer(s);
+  } catch (err) {
+    remote.error = `${what} failed: ${err.message}`;
+    await remoteResync();
+  }
+}
+
+/** The in-browser Stockfish answers offers made to its side: takebacks granted, draws by eval (≤ +0.5 for it). */
+async function netEngineAnswer() {
+  const s = remote?.server;
+  const side = netEngineSide();
+  if (!s || !side || s.status !== 'ongoing' || remote.answering) return;
+  const them = remote.side === 'w' ? 'white' : 'black';
+  if (s.offers?.takeback === them) {
+    remote.answering = true;
+    try {
+      applyServer(await botApi.takeback(remote.id, remote.engineToken, 'accept'));
+    } catch (err) {
+      remote.error = `Stockfish: ${err.message}`;
+    } finally {
+      remote.answering = false;
+    }
+    return netEngineAnswer();
+  }
+  if (s.offers?.draw !== them || remote.engineBusy) return;
+  remote.answering = true;
+  let reply = null;
+  try {
+    const sc = await engine.evaluate(s.fen);
+    if (sc && remote.server.fen === s.fen && remote.server.offers?.draw === them) {
+      const sign = s.turn[0] === side ? 1 : -1; // score is for the side to move
+      const accept = sc.mate != null ? sign * sc.mate < 0 : sign * sc.cp <= 50;
+      reply = await botApi.draw(remote.id, remote.engineToken, accept ? 'accept' : 'decline');
+    }
+  } catch (err) {
+    remote.error = `Stockfish: ${err.message || err}`;
+  } finally {
+    remote.answering = false;
+  }
+  if (reply) applyServer(reply);
+  else netEngineTurn();
 }
 
 /** In-browser Stockfish plays its side through the API, exactly like an external bot. */
 async function netEngineTurn() {
   const s = remote?.server;
-  if (!s || s.status !== 'ongoing' || remote.engineBusy || s.turn[0] !== netEngineSide()) return;
+  if (!s || s.status !== 'ongoing' || remote.engineBusy || remote.answering || s.turn[0] !== netEngineSide()) return;
   remote.engineBusy = true;
   renderStatus();
   let retry = false;
+  let answerFirst = false;
   try {
     // On a clock, think at most ~1/40 of the time left so Stockfish doesn't flag.
     const left = s.clock && s.ply >= 2 ? clockLeft(s, s.turn[0]) : null;
     const cap = left === null ? undefined : Math.max(50, Math.floor(left / 40));
     const pause = left === null ? BOT_PAUSE_MS : Math.min(BOT_PAUSE_MS, cap);
     const [uci] = await Promise.all([engine.bestMove(s.fen, remote.engineLevel ?? 5, cap), sleep(pause)]);
-    if (!uci || remote.server.ply !== s.ply) return;
+    if (!uci || remote.server.fen !== s.fen) return; // position changed meanwhile (e.g. a takeback)
+    // A draw offer arrived while thinking: answer it first (moving would decline it), then search again.
+    if (remote.answering || remote.server.offers?.draw === (remote.side === 'w' ? 'white' : 'black')) {
+      answerFirst = true;
+      return;
+    }
     const next = await botApi.move(remote.id, remote.engineToken, uci);
     remote.engineBusy = false;
     if (!remote.busy) applyServer(next);
@@ -1271,6 +1367,7 @@ async function netEngineTurn() {
     renderStatus();
   }
   if (retry) setTimeout(netEngineTurn, 2000);
+  if (answerFirst) netEngineAnswer();
 }
 
 /** Store a finished online game in My games once (players only). */
@@ -1308,7 +1405,10 @@ const tcLabel = (c) => `${+(c.initial_ms / 60000).toFixed(2)}+${+(c.increment_ms
 
 function remoteEndText(s) {
   const who = s.reason?.startsWith('black') ? 'Black' : 'White';
-  if (s.status === 'aborted') return s.reason === 'not_joined' ? 'aborted, the opponent never joined' : `aborted, ${who} made no first move`;
+  if (s.status === 'aborted') {
+    if (s.reason === 'not_joined') return 'aborted, the opponent never joined';
+    return s.reason?.endsWith('_aborted') ? `aborted by ${who}` : `aborted, ${who} made no first move`;
+  }
   if (s.status === 'resigned') return `${who} resigned`;
   if (s.status === 'timeout') return `${who} ran out of time`;
   return REASON_TEXT[s.reason] || s.status;
@@ -1356,6 +1456,10 @@ function applyServer(s) {
   const local = state.history.map(toUci);
   const srv = s.moves.map((m) => m.uci);
   const isPrefix = local.length <= srv.length && local.every((u, i) => u === srv[i]);
+  if (srv.length < local.length) {
+    premoves = []; // takeback: queued moves no longer fit
+    pendingMove = null;
+  }
   const following = atEnd();
   if (isPrefix && srv.length === local.length && !sideSet) {
     if (prev?.status === 'ongoing' && s.status !== 'ongoing' && state.settings.sound) playSound('end', state.settings.volume);
@@ -1381,6 +1485,7 @@ function applyServer(s) {
     update();
   }
   netEngineTurn();
+  netEngineAnswer();
   maybeSaveNet();
   runPremove();
 }

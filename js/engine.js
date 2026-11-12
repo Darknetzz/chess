@@ -25,6 +25,10 @@ export class Engine {
         if (line === 'uciok') this.send('isready');
         else if (line === 'readyok') resolve();
         else if (line.startsWith('bestmove')) this._onBestmove(line);
+        else if (this.pending?.score && line.startsWith('info') && !/\b(lowerbound|upperbound)\b/.test(line)) {
+          const m = /\bscore (cp|mate) (-?\d+)/.exec(line);
+          if (m) this.pending.score = m[1] === 'cp' ? { cp: +m[2], mate: null } : { cp: null, mate: +m[2] };
+        }
       };
       this.send('uci');
     });
@@ -44,7 +48,8 @@ export class Engine {
     const move = line.split(/\s+/)[1];
     const p = this.pending;
     this.pending = null;
-    p?.resolve(move && move !== '(none)' ? move : null);
+    if (p?.score) p.resolve(p.score);
+    else p?.resolve(move && move !== '(none)' ? move : null);
   }
 
   async newGame() {
@@ -65,6 +70,19 @@ export class Engine {
       this.send(`position fen ${fen}`);
       const ms = Math.max(20, Math.min(50 + lvl * 50, capMs ?? Infinity));
       this.send(`go depth ${lvl + 1} movetime ${ms}`);
+      this.searching = true;
+    });
+  }
+
+  // Full-strength eval: { cp, mate } for the side to move, or null if cancelled.
+  async evaluate(fen, ms = 1500) {
+    await this.init();
+    this.cancel();
+    return new Promise((resolve) => {
+      this.pending = { resolve, score: { cp: 0, mate: null } };
+      this.send('setoption name Skill Level value 20');
+      this.send(`position fen ${fen}`);
+      this.send(`go depth 14 movetime ${ms}`);
       this.searching = true;
     });
   }

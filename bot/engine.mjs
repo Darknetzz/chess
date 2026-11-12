@@ -48,6 +48,7 @@ class Proc {
 /**
  * Pool of at most `maxProcs` engines with a FIFO queue.
  * bestMove(fen, level, capMs?) resolves with a UCI move or null (no legal move); capMs caps the search time.
+ * evaluate(fen) resolves with { cp, mate } for the side to move.
  */
 export function enginePool({ maxProcs = 2, maxDepth = 12, maxMs = 2000 } = {}) {
   const idle = [];
@@ -82,11 +83,33 @@ export function enginePool({ maxProcs = 2, maxDepth = 12, maxMs = 2000 } = {}) {
     }
   }
 
+  /** Full-strength eval of fen: { cp, mate } from the side to move's point of view (one of them null). */
+  async function evaluate(fen) {
+    const depth = Math.min(12, maxDepth);
+    const ms = Math.max(200, maxMs);
+    let p = idle.pop();
+    if (!p || p.dead) p = await fresh();
+    try {
+      let score = { cp: 0, mate: null };
+      p.send('setoption name Skill Level value 20', 'ucinewgame', `position fen ${fen}`, `go depth ${depth} movetime ${ms}`);
+      await p.until((l) => {
+        const m = /\bscore (cp|mate) (-?\d+)/.exec(l);
+        if (m && !/\b(lowerbound|upperbound)\b/.test(l)) score = m[1] === 'cp' ? { cp: +m[2], mate: null } : { cp: null, mate: +m[2] };
+        return l.startsWith('bestmove');
+      }, ms + 10_000);
+      idle.push(p);
+      return score;
+    } catch (e) {
+      p.kill();
+      throw e;
+    }
+  }
+
   function pump() {
     while (running < maxProcs && queue.length) {
       const job = queue.shift();
       running++;
-      search(job.fen, job.level, job.capMs)
+      (job.eval ? evaluate(job.fen) : search(job.fen, job.level, job.capMs))
         .then(job.resolve, job.reject)
         .finally(() => {
           running--;
@@ -99,6 +122,11 @@ export function enginePool({ maxProcs = 2, maxDepth = 12, maxMs = 2000 } = {}) {
     bestMove: (fen, level, capMs) =>
       new Promise((resolve, reject) => {
         queue.push({ fen, level, capMs, resolve, reject });
+        pump();
+      }),
+    evaluate: (fen) =>
+      new Promise((resolve, reject) => {
+        queue.push({ eval: true, fen, resolve, reject });
         pump();
       }),
     close: () => idle.splice(0).forEach((p) => p.kill()),

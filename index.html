@@ -64,6 +64,7 @@
 
       <div class="net-panel" id="net-panel" hidden>
         <ul class="net-players" id="net-players"></ul>
+        <div class="net-offers" id="net-offers" hidden></div>
         <p class="net-rules" id="net-rules"></p>
         <div class="net-share" id="net-invite" hidden>
           <span class="net-label">Invite link: opens the game as <b id="net-invite-side"></b></span>
@@ -83,6 +84,9 @@
       <div class="buttons">
         <button type="button" id="new" class="live-only" title="New game (N)"><i data-icon="square-plus"></i><span class="lbl">New game</span></button>
         <button type="button" id="resign" class="live-only" title="Resign"><i data-icon="flag"></i><span class="lbl">Resign</span></button>
+        <button type="button" id="abort" title="Abort the game (before both first moves)" hidden><i data-icon="x"></i><span class="lbl">Abort</span></button>
+        <button type="button" id="draw-btn" title="Offer a draw" hidden><i data-icon="handshake"></i><span class="lbl">Offer draw</span></button>
+        <button type="button" id="takeback-btn" title="Ask to take back your last move" hidden><i data-icon="undo-2"></i><span class="lbl">Takeback</span></button>
         <button type="button" id="flip" title="Flip board (F)"><i data-icon="arrow-up-down"></i><span class="lbl">Flip board</span></button>
         <button type="button" id="coords" title="Cycle coordinates (C)"><i data-icon="grid-3x3"></i><span class="lbl">Coordinates</span></button>
         <button type="button" id="analysis-btn" title="Stockfish analysis: best move + evaluation (A)" aria-pressed="false"><i data-icon="cpu"></i><span class="lbl">Analysis</span></button>

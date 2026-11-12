@@ -16,7 +16,7 @@ Browser chess against a friend (invite link), Stockfish or your own bot, all ref
   - **Stockfish** (level 0–20): runs in your browser and plays its moves through the API like any bot
   - **External bot**: you get the bot's token and a ready-made command
   - **Analysis board**: local free play for both sides, with undo/redo and FEN/PGN load (no server, no clock)
-- Online games: the board follows your side, shows whose turn it is, the time left for the move (or both chess clocks), a live connected dot per player, and resign. Each player picks a display name (New game dialog, the join dialog of an invite link, or the pencil next to your name). Illegal or out-of-turn moves are rejected by the server and the piece snaps back. Tokens stay in this browser, so a reload or reconnect resumes the game. A spectator link without a token is read-only and live. Engine analysis is disabled while you play (the eval bar only if the host allowed it).
+- Online games: the board follows your side, shows whose turn it is, the time left for the move (or both chess clocks), a live connected dot per player, resign, abort (before both first moves), draw offers and takeback requests (with an Accept/Decline banner for the other side). When you play Stockfish, it grants takebacks and accepts a draw only if its eval is +0.5 or worse for it. Each player picks a display name (New game dialog, the join dialog of an invite link, or the pencil next to your name). Illegal or out-of-turn moves are rejected by the server and the piece snaps back. Tokens stay in this browser, so a reload or reconnect resumes the game. A spectator link without a token is read-only and live. Engine analysis is disabled while you play (the eval bar only if the host allowed it).
 - Legal-move hints, drag or click to move, promotion picker, check/last-move highlight, sounds, move animation
 - Move list (click to jump), undo/redo (`←`/`→`), `Home`/`End`, flip (`F`), analysis (`A`), eval bar (`E`), coordinates off/edges/every tile (`C`)
 - **Stockfish analysis** (`A`, or Settings): live best-move arrow, eval bar and depth for the shown position, on a separate full-strength worker; live games played with it on are marked *assisted* (badge in My games, `Annotator` header in PGN)
@@ -71,12 +71,17 @@ Refereed games for external bots, or a bot against a human. The server holds the
 |---|---|---|
 | `POST /api/games` | `{move_time_ms? \| clock?, white?, black?, engine?}` | Create a game. Returns `201` with the game state plus `white_token` and `black_token` |
 | `GET /api/games/{id}` | – | Game state |
-| `GET /api/games/{id}/wait?since=<ply>` | – | Long-poll: answers as soon as `ply > since`, the game ends or a player connects/disconnects. Otherwise it answers after 30 s with the unchanged state |
+| `GET /api/games/{id}/wait?since=<ply>` | – | Long-poll: answers as soon as `ply != since` (a takeback lowers it), the game ends, an offer changes or a player connects/disconnects. Otherwise it answers after 30 s with the unchanged state |
+| `GET /api/games/by-token` | – | Game state of the game the `Authorization: Bearer <token>` belongs to, plus `you` |
+| `GET /api/games/{id}/pgn` | – | PGN (`application/x-chess-pgn`) of the game so far, finished or ongoing |
 | `POST /api/games/{id}/move` | `{token, move}` | Play a move in UCI form: `e2e4`, `e1g1` (castling), `e7e8q` (promotion) |
 | `POST /api/games/{id}/resign` | `{token}` | Resign the token's side |
+| `POST /api/games/{id}/abort` | `{token}` | Abort (no result) while `ply < 2`, i.e. before both sides' first moves |
+| `POST /api/games/{id}/draw` | `{token, action}` | `offer`, `accept` or `decline` a draw (see *Offers*) |
+| `POST /api/games/{id}/takeback` | `{token, action}` | `request`, `accept` or `decline` a takeback (see *Offers*) |
 | `POST /api/games/{id}/name` | `{token, name}` | Set the display name of the token's side (up to 40 chars, `""` clears it) while the game is ongoing |
 
-**Tokens** are returned only once, on create. Give each player its own token: it is the only credential for that side. On the two `GET` endpoints, an optional `Authorization: Bearer <token>` header adds `"you": "white"|"black"` to the response and marks that side as connected.
+**Tokens** are returned only once, on create. Give each player its own token: it is the only credential for that side. `POST` responses include `you`. On the `GET` endpoints, an optional `Authorization: Bearer <token>` header adds `"you": "white"|"black"` to the response and marks that side as connected.
 
 **Create options** (all optional):
 - `move_time_ms`: per-move time limit (see *Time control*)
@@ -100,7 +105,7 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
   "status": "ongoing",          // ongoing | checkmate | stalemate | draw | resigned | timeout | aborted
   "result": "*",                // * | 1-0 | 0-1 | 1/2-1/2
   "winner": null,               // white | black | null
-  "reason": null,               // threefold | fifty_move | insufficient_material | white_resigned | black_timeout | white_no_first_move | not_joined | …
+  "reason": null,               // threefold | fifty_move | insufficient_material | white_resigned | black_timeout | white_no_first_move | black_aborted | agreement | not_joined | …
   "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
   "turn": "black",
   "ply": 1,
@@ -114,6 +119,7 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
   "first_move_ms": 1800000,     // limit for each side's first move, once both sides have joined
   "clock": null,                // clock games: { "initial_ms": 300000, "increment_ms": 3000 }
   "clocks": null,               // clock games: time left now, { "white": 297512, "black": 300000 }
+  "offers": { "draw": null, "takeback": null }, // pending offer: the side that made it (white | black)
   "premoves": true,             // the host allows premoves in the web client
   "eval_bar": false,            // the host allows the evaluation bar in the web client
   "server_now": 1794420812000,  // server time of this response, to correct for client clock skew
@@ -130,20 +136,25 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
 - *Chess clock* (`clock`): each side has `initial_ms` in total and gets `increment_ms` back after each of its moves. The clocks start once both sides have made their first move. After that, the side whose clock runs out loses with `status: "timeout"`. `deadline_at` is when the clock of the side to move runs out.
 - If the server restarts and a deadline passed while it was down, that side gets its time back (a fresh per-move limit, or the clock time it had at its last move) instead of losing.
 
+**Offers:**
+- *Draw*: `offer` sets `offers.draw` to your side; the opponent can `accept` (`status: "draw"`, reason `agreement`) or `decline`. Offering while the opponent's offer is pending accepts it. Making a move declines the opponent's pending offer; your own offer stays open through your move. One offer per side per position.
+- *Takeback*: `request` asks to undo your last move: one ply if the opponent hasn't replied yet, else two (your move and the reply), so it is your turn again. Once accepted, the moves are removed and pending offers are cleared. Clocks are not refunded: both sides keep the time they have; the side to move gets a fresh per-move limit, or its clock runs again.
+- A server engine side grants takebacks right away and accepts a draw only if its eval is +0.5 or worse for it.
+
 **Errors** come back as `{"error": "<code>", "message": "<text>"}`:
 
 | HTTP | `error` | When |
 |---|---|---|
-| 400 | `invalid_json`, `invalid_move_format`, `missing_token`, `invalid_move_time`, `invalid_clock`, `invalid_premoves`, `invalid_eval_bar`, `invalid_name`, `invalid_since` | Malformed request |
+| 400 | `invalid_json`, `invalid_move_format`, `missing_token`, `invalid_action`, `invalid_move_time`, `invalid_clock`, `invalid_premoves`, `invalid_eval_bar`, `invalid_name`, `invalid_since` | Malformed request |
 | 401 | `invalid_token` | Token matches neither side |
 | 404 | `not_found` | Unknown game or endpoint |
 | 405 | `method_not_allowed` | Wrong HTTP method |
-| 409 | `not_your_turn`, `game_over` | Valid token, wrong moment |
+| 409 | `not_your_turn`, `game_over`, `cannot_abort`, `already_offered`, `no_offer`, `nothing_to_take_back` | Valid token, wrong moment |
 | 413 | `body_too_large` | Body over 4 KB |
 | 422 | `illegal_move` | Not legal in this position. Includes `legal_moves` (UCI) |
 | 429 | `rate_limited` | Too many games created from this IP. Includes `retry_after_s` |
 
-**Bot loop:** `GET` the state with your token to learn your side. Then repeat: if it's your turn, `POST move`; otherwise `GET wait?since=<ply>`. Stop when `status` is no longer `ongoing`.
+**Bot loop:** `GET` the state with your token to learn your side. Then repeat: if it's your turn, `POST move`; otherwise `GET wait?since=<ply>`. Answer offers in `offers` made to you. Stop when `status` is no longer `ongoing`.
 
 ```bash
 # create a game; prints both tokens, a spectate link and a play-as-white link
@@ -165,8 +176,16 @@ The same game API as [MCP](https://modelcontextprotocol.io) tools, so AI agents 
 | Tool | Arguments | Does |
 |---|---|---|
 | `create_game` | `move_time_ms?` or `clock_initial_ms?` + `clock_increment_ms?`, `premoves?`, `eval_bar?`, `white_name?`, `black_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20) | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play |
-| `make_move` | `game_id`, `token`, `move` (UCI) | Play a move; an illegal move returns an error listing the legal moves |
-| `get_board` | `game_id`, `token?`, `wait_since_ply?` | ASCII board, FEN, moves, legal moves, status, time left. With `wait_since_ply` it long-polls (up to ~25 s) for the opponent's move |
+| `make_move` | `game_id?`, `token`, `move` (UCI) | Play a move; an illegal move returns an error listing the legal moves |
+| `get_board` | `game_id?`, `token?`, `wait_since_ply?` | ASCII board, FEN, moves, legal moves, status, time left, rules (time control, premoves, eval bar) and pending offers. With `wait_since_ply` it long-polls (up to ~25 s) for the opponent's move |
+| `resign` | `game_id?`, `token` | Resign |
+| `abort` | `game_id?`, `token` | Abort before both sides' first moves |
+| `draw` | `game_id?`, `token`, `action` (`offer`/`accept`/`decline`) | Draw offers |
+| `takeback` | `game_id?`, `token`, `action` (`request`/`accept`/`decline`) | Takeback requests |
+| `get_pgn` | `game_id?`, `token?` | PGN of the game, finished or ongoing |
+| `list_games` | – | Ongoing games created or played (with a token) through this MCP server, without tokens. Over stdio: games this process used |
+
+`game_id` can be left out whenever `token` is given: the token names its game.
 
 Results are text for the model plus the raw game state as `structuredContent`. API errors (wrong token, not your turn, …) come back as tool errors (`isError: true`) the agent can read and recover from. Both protocol eras are supported: `2026-07-28` (`server/discover`, per-request `_meta`) and the `initialize` handshake (`2025-11-25`, `2025-06-18`, `2025-03-26`).
 

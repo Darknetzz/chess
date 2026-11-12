@@ -1,6 +1,7 @@
 // Shared MCP layer for the bot API: tool definitions, JSON-RPC dispatch and result text.
 // Transports (bot/mcp.mjs over stdio, POST /mcp in bot/server.mjs) supply a backend:
-//   create(opts) / get(id, token) / wait(id, since, token) / move(id, token, uci)
+//   create(opts) / get(id, token) / wait(id, since, token) / move(id, token, uci) / resign(id, token) / abort(id, token)
+//   draw(id, token, action) / takeback(id, token, action) / pgn(id, token) -> text / lookup(token) -> id / list() -> states
 // Each returns the API game state or throws { status, code, message, extra } (the API error shape).
 // Speaks both protocol eras: 2026-07-28 (server/discover + per-request _meta) and the older
 // initialize handshake (2025-11-25 and earlier).
@@ -16,7 +17,9 @@ const CACHE = { ttlMs: 3_600_000, cacheScope: 'public' };
 const INSTRUCTIONS = `Chess games refereed by a server. create_game returns a game_id and one secret token per side you control.
 Loop: get_board with your token tells you your side ("you"). If it is your turn, make_move (UCI, e.g. e2e4, e7e8q).
 Otherwise call get_board with wait_since_ply = the current ply; it returns when the opponent moves (or after ~25 s unchanged).
-Time: nothing counts down until both sides are connected (aborted after 24 h if they never are). Then each side has first_move_ms (30 min) for its first move, else the game is aborted. After that, per-move games give every move move_time_ms; clock games ("clock" set) give each side initial_ms plus increment_ms per move. Running out loses on time. Stop when status is no longer "ongoing".`;
+Time: nothing counts down until both sides are connected (aborted after 24 h if they never are). Then each side has first_move_ms (30 min) for its first move, else the game is aborted. After that, per-move games give every move move_time_ms; clock games ("clock" set) give each side initial_ms plus increment_ms per move. Running out loses on time. Stop when status is no longer "ongoing".
+Every tool that takes game_id also works with just your token. list_games shows ongoing games used through this server.
+Before both sides' first moves either side may abort; later, end a lost game with resign. Draws: draw offer/accept/decline (moving also declines). Takebacks: takeback request undoes your last move once the opponent accepts. Watch "offers" in get_board and answer offers made to you.`;
 
 export class RpcError extends Error {
   constructor(code, message, data) {
@@ -27,7 +30,15 @@ export class RpcError extends Error {
 
 const str = (description, extra = {}) => ({ type: 'string', description, ...extra });
 const int = (description, minimum, maximum) => ({ type: 'integer', description, minimum, maximum });
-const GAME_ID = str('Game id returned by create_game', { pattern: '^[A-Za-z0-9]{10}$' });
+const GAME_ID = str('Game id returned by create_game. Optional when token is given', { pattern: '^[A-Za-z0-9]{10}$' });
+const TOKEN = str('Secret token of your side');
+const action = (name, title, description, extra = {}, annotations = {}) => ({
+  name,
+  title,
+  description,
+  inputSchema: { type: 'object', properties: { game_id: GAME_ID, token: TOKEN, ...extra }, required: ['token', ...Object.keys(extra)], additionalProperties: false },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false, ...annotations },
+});
 
 export const TOOLS = [
   {
@@ -65,7 +76,7 @@ export const TOOLS = [
         token: str('Secret token of the side to move'),
         move: str('Move in UCI form: e2e4, e1g1 (castling), e7e8q (promotion)', { pattern: '^[a-hA-H][1-8][a-hA-H][1-8][qrbnQRBN]?$' }),
       },
-      required: ['game_id', 'token', 'move'],
+      required: ['token', 'move'],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -80,12 +91,33 @@ export const TOOLS = [
       type: 'object',
       properties: {
         game_id: GAME_ID,
-        token: str('Optional: your token, to learn your side and show as connected'),
+        token: str('Your token, to learn your side and show as connected. Required without game_id'),
         wait_since_ply: int('Optional: long-poll until the ply count exceeds this', 0),
       },
-      required: ['game_id'],
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  action('resign', 'Resign', 'Resign the game for the side that token controls: the opponent wins.', {}, { destructiveHint: true }),
+  action('abort', 'Abort', 'Abort the game (no result) before both sides have made their first move.', {}, { destructiveHint: true }),
+  action('draw', 'Draw offer', "Offer a draw, or accept / decline the opponent's offer. Offering when the opponent already offers accepts it. Making a move declines a pending offer.", {
+    action: str('offer, accept or decline', { enum: ['offer', 'accept', 'decline'] }),
+  }),
+  action('takeback', 'Takeback', "Ask to take back your last move (and the reply to it, if made), or accept / decline the opponent's request. Clocks are not refunded.", {
+    action: str('request, accept or decline', { enum: ['request', 'accept', 'decline'] }),
+  }),
+  {
+    name: 'get_pgn',
+    title: 'Export PGN',
+    description: 'PGN of the game (finished or ongoing) with players, result, time control and termination.',
+    inputSchema: { type: 'object', properties: { game_id: GAME_ID, token: str('Your token; required without game_id') }, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: 'list_games',
+    title: 'List active games',
+    description: 'Ongoing games created or played through this MCP server: id, players, ply, side to move, clocks and offers. Tokens are not shown.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
 ];
@@ -96,6 +128,9 @@ const fail = (message) => {
 const optStr = (v, k) => (v === undefined || typeof v === 'string' ? v : fail(`"${k}" must be a string`));
 const optInt = (v, k) => (v === undefined || Number.isInteger(v) ? v : fail(`"${k}" must be an integer`));
 const reqStr = (v, k) => (typeof v === 'string' && v ? v : fail(`"${k}" is required`));
+
+/** "5+3" style label: minutes + increment seconds. */
+const tc = (c) => `${+(c.initial_ms / 60000).toFixed(2)}+${+(c.increment_ms / 1000).toFixed(1)}`;
 
 function moveList(moves) {
   const out = [];
@@ -125,11 +160,21 @@ export function describe(s, link) {
     ? `Clock ${sec(s.clock.initial_ms)}s + ${sec(s.clock.increment_ms)}s/move; left: white ${sec(s.clocks.white)}s, black ${sec(s.clocks.black)}s${s.ply < 2 ? ` (clocks start after both first moves, each within ${sec(s.move_time_ms)}s)` : ''}`
     : `Move time ${s.move_time_ms} ms`;
   lines.push(`Players: white ${name('white')}, black ${name('black')}. ${time}. Watch: ${link(s.game_id)}`);
+  const rule = s.clock ? `clock ${tc(s.clock)}` : `${sec(s.move_time_ms)}s per move`;
+  lines.push(`Rules: ${rule}, premoves ${s.premoves === false ? 'off' : 'allowed'}, eval bar ${s.eval_bar ? 'allowed' : 'off'} (web client).`);
+  const o = s.offers || {};
+  const tail = (c, verb) => (!s.you ? '' : c === s.you ? ' (yours, waiting for the opponent)' : `: answer with ${verb} accept or decline`);
+  if (o.draw) lines.push(`Draw offered by ${o.draw}${tail(o.draw, 'draw')}.`);
+  if (o.takeback) lines.push(`Takeback requested by ${o.takeback}${tail(o.takeback, 'takeback')}.`);
+  if (s.status === 'ongoing' && s.ply < 2) lines.push('Abort is possible until both sides have made their first move.');
   return lines.join('\n');
 }
 
 async function callTool(backend, name, a = {}, link) {
   if (typeof a !== 'object' || a === null || Array.isArray(a)) fail('arguments must be an object');
+  // game_id may be left out when a token is given: the token names its game.
+  const gameId = async (token) => optStr(a.game_id, 'game_id') || (token ? backend.lookup(token) : fail('"game_id" or "token" is required'));
+  const choice = (k, allowed) => (allowed.includes(a[k]) ? a[k] : fail(`"${k}" must be one of: ${allowed.join(', ')}`));
   switch (name) {
     case 'create_game': {
       const opts = {};
@@ -153,16 +198,48 @@ async function callTool(backend, name, a = {}, link) {
       return { s, text: `Created game ${s.game_id}.\n${tokens.join('\n')}\nKeep tokens secret; pass one to make_move/get_board.\n\n${describe(s, link)}` };
     }
     case 'make_move': {
-      const s = await backend.move(reqStr(a.game_id, 'game_id'), reqStr(a.token, 'token'), reqStr(a.move, 'move'));
+      const token = reqStr(a.token, 'token');
+      const s = await backend.move(await gameId(token), token, reqStr(a.move, 'move'));
       return { s, text: `Played ${s.moves.at(-1)?.san}.\n\n${describe(s, link)}` };
     }
     case 'get_board': {
-      const id = reqStr(a.game_id, 'game_id');
       const token = optStr(a.token, 'token') || null;
+      const id = await gameId(token);
       const since = optInt(a.wait_since_ply, 'wait_since_ply');
       if (since !== undefined && since < 0) fail('"wait_since_ply" must be >= 0');
       const s = since === undefined ? await backend.get(id, token) : await backend.wait(id, since, token);
       return { s, text: describe(s, link) };
+    }
+    case 'resign':
+    case 'abort': {
+      const token = reqStr(a.token, 'token');
+      const s = await backend[name](await gameId(token), token);
+      return { s, text: `${name === 'resign' ? 'Resigned' : 'Aborted'}.\n\n${describe(s, link)}` };
+    }
+    case 'draw':
+    case 'takeback': {
+      const token = reqStr(a.token, 'token');
+      const act = choice('action', name === 'draw' ? ['offer', 'accept', 'decline'] : ['request', 'accept', 'decline']);
+      const s = await backend[name](await gameId(token), token, act);
+      const what = name === 'draw' ? 'Draw' : 'Takeback';
+      const done = { offer: 'offered', request: 'requested', accept: 'accepted', decline: 'declined' }[act];
+      return { s, text: `${what} ${done}.\n\n${describe(s, link)}` };
+    }
+    case 'get_pgn': {
+      const token = optStr(a.token, 'token') || null;
+      const text = await backend.pgn(await gameId(token), token);
+      return { s: { pgn: text }, text };
+    }
+    case 'list_games': {
+      const games = await backend.list();
+      const row = (g) => {
+        const p = g.players || {};
+        const clocks = g.clocks ? `, clocks ${Math.round(g.clocks.white / 1000)}s / ${Math.round(g.clocks.black / 1000)}s` : '';
+        const offers = [g.offers?.draw && `draw offered by ${g.offers.draw}`, g.offers?.takeback && `takeback asked by ${g.offers.takeback}`].filter(Boolean);
+        return `- ${g.game_id}: ${p.white?.name || 'White'} vs ${p.black?.name || 'Black'}, ply ${g.ply}, ${g.turn} to move${clocks}${offers.length ? `; ${offers.join(', ')}` : ''}`;
+      };
+      const text = games.length ? `${games.length} ongoing game(s):\n${games.map(row).join('\n')}` : 'No ongoing games.';
+      return { s: { games }, text };
     }
     default:
       throw new RpcError(E.params, `Unknown tool: ${name}`);

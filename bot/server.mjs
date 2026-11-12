@@ -110,12 +110,29 @@ if (db.prepare('PRAGMA user_version').get().user_version < 5) {
     COMMIT;
   `);
 }
+if (db.prepare('PRAGMA user_version').get().user_version < 6) {
+  // Pending draw offer / takeback request ('w'|'b' = who asked); mcp = 1 once the game was used through /mcp.
+  db.exec(`
+    BEGIN;
+    ALTER TABLE games ADD COLUMN draw_offer TEXT;
+    ALTER TABLE games ADD COLUMN takeback_offer TEXT;
+    ALTER TABLE games ADD COLUMN mcp INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX IF NOT EXISTS games_white_hash ON games(white_hash);
+    CREATE INDEX IF NOT EXISTS games_black_hash ON games(black_hash);
+    PRAGMA user_version = 6;
+    COMMIT;
+  `);
+}
 const q = {
   insert: db.prepare(`INSERT INTO games (id, created_at, white_hash, black_hash, move_time_ms, deadline_at, white_name, black_name, engine_side, engine_level,
     clock_ms, increment_ms, white_ms, black_ms, premoves, eval_bar) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   get: db.prepare('SELECT * FROM games WHERE id = ?'),
   ongoing: db.prepare(`SELECT * FROM games WHERE status = 'ongoing'`),
-  save: db.prepare(`UPDATE games SET moves = ?, status = ?, result = ?, reason = ?, last_move_at = ?, deadline_at = ?, white_ms = ?, black_ms = ?, joined_at = ? WHERE id = ?`),
+  save: db.prepare(`UPDATE games SET moves = ?, status = ?, result = ?, reason = ?, last_move_at = ?, deadline_at = ?, white_ms = ?, black_ms = ?, joined_at = ?,
+    draw_offer = ?, takeback_offer = ? WHERE id = ?`),
+  byHash: db.prepare('SELECT id FROM games WHERE white_hash = ? OR black_hash = ? LIMIT 1'),
+  markMcp: db.prepare('UPDATE games SET mcp = 1 WHERE id = ? AND mcp = 0'),
+  mcpOngoing: db.prepare(`SELECT id FROM games WHERE status = 'ongoing' AND mcp = 1 ORDER BY created_at DESC LIMIT 50`),
   restart: db.prepare('UPDATE games SET deadline_at = ?, last_move_at = ?, joined_at = ? WHERE id = ?'),
   name: { w: db.prepare('UPDATE games SET white_name = ? WHERE id = ?'), b: db.prepare('UPDATE games SET black_name = ? WHERE id = ?') },
 };
@@ -140,12 +157,17 @@ function load(id) {
   if (live.has(id)) return live.get(id);
   const row = q.get.get(id);
   if (!row) return null;
-  const g = { row, chess: replay(row), waiters: new Set(), timer: null, seen: { w: 0, b: 0 }, open: { w: 0, b: 0 }, presence: '' };
+  const g = {
+    row, chess: replay(row), waiters: new Set(), timer: null, seen: { w: 0, b: 0 }, open: { w: 0, b: 0 }, presence: '',
+    gen: 0, // bumped on every move and takeback; async engine work checks it to drop stale results
+    asked: { draw: { w: -1, b: -1 }, takeback: { w: -1, b: -1 } }, // g.gen of each side's last offer: one per position
+  };
   if (row.status === 'ongoing') {
     live.set(id, g);
     schedule(g);
     checkJoined(g);
     engineTurn(g);
+    engineAnswer(g);
   }
   return g;
 }
@@ -155,15 +177,20 @@ function engineTurn(g, attempt = 0) {
   const r = g.row;
   if (r.status !== 'ongoing' || r.engine_side !== g.chess.turn() || g.thinking) return;
   g.thinking = true;
-  const ply = g.chess.history().length;
+  const gen = g.gen;
   // On a clock, think at most ~1/40 of the time left so the engine doesn't flag.
   const left = clockRunning(g) ? timeLeft(g, r.engine_side) : null;
   engines
     .bestMove(g.chess.fen(), r.engine_level, left === null ? undefined : Math.max(50, Math.floor(left / 40)))
     .then((uci) => {
       g.thinking = false;
-      if (r.status !== 'ongoing' || g.chess.history().length !== ply) return;
+      if (r.status !== 'ongoing') return;
+      if (g.gen !== gen) return engineTurn(g); // position changed (takeback) while thinking: start over
       if (!uci) throw new Error('engine returned no move');
+      if (g.evaluating) {
+        g.held = { uci, gen }; // a draw offer is being judged: moving now would decline it
+        return;
+      }
       applyMove(g, uci);
     })
     .catch((e) => {
@@ -174,15 +201,75 @@ function engineTurn(g, attempt = 0) {
     });
 }
 
+/**
+ * The server engine answers offers made to it: takebacks are always granted; a draw is accepted
+ * when its own eval is at most +0.5 (or it is getting mated), else declined.
+ */
+function engineAnswer(g) {
+  const r = g.row;
+  const me = r.engine_side;
+  if (!me || r.status !== 'ongoing') return;
+  const them = me === 'w' ? 'b' : 'w';
+  if (r.takeback_offer === them) {
+    undo(g, plyToUndo(g, them));
+    persist(g);
+    wake(g);
+    engineTurn(g);
+  }
+  if (r.draw_offer !== them || g.evaluating) return;
+  g.evaluating = true;
+  const gen = g.gen;
+  const fen = g.chess.fen();
+  // Afterwards, play a move found while judging (if still current), else think again.
+  const resume = () => {
+    const held = g.held;
+    g.held = null;
+    if (r.status !== 'ongoing') return;
+    if (held && held.gen === g.gen) {
+      try {
+        applyMove(g, held.uci);
+      } catch (e) {
+        console.error(`held engine move failed in ${r.id}:`, e.message);
+      }
+    } else engineTurn(g);
+  };
+  engines
+    .evaluate(fen)
+    .then((sc) => {
+      g.evaluating = false;
+      if (r.status === 'ongoing' && r.draw_offer === them) {
+        if (g.gen !== gen) return engineAnswer(g);
+        // Score is for the side to move; flip it to the engine's point of view.
+        const sign = g.chess.turn() === me ? 1 : -1;
+        const accept = sc.mate != null ? sign * sc.mate < 0 : sign * sc.cp <= 50;
+        if (accept) finish(g, 'draw', '1/2-1/2', 'agreement');
+        else r.draw_offer = null;
+        persist(g);
+        wake(g);
+      }
+      resume();
+    })
+    .catch((e) => {
+      g.evaluating = false;
+      console.error(`engine eval failed in ${r.id}:`, e.message);
+      if (r.status === 'ongoing' && r.draw_offer === them) {
+        r.draw_offer = null;
+        persist(g);
+        wake(g);
+      }
+      resume();
+    });
+}
+
 function persist(g) {
   const r = g.row;
-  q.save.run(r.moves, r.status, r.result, r.reason, r.last_move_at, r.deadline_at, r.white_ms, r.black_ms, r.joined_at, r.id);
+  q.save.run(r.moves, r.status, r.result, r.reason, r.last_move_at, r.deadline_at, r.white_ms, r.black_ms, r.joined_at, r.draw_offer, r.takeback_offer, r.id);
 }
 
 function finish(g, status, result, reason) {
   const turn = g.chess.turn();
   if (clockRunning(g)) g.row[`${SIDE[turn]}_ms`] = timeLeft(g, turn); // freeze the running clock
-  Object.assign(g.row, { status, result, reason, deadline_at: null });
+  Object.assign(g.row, { status, result, reason, deadline_at: null, draw_offer: null, takeback_offer: null });
   clearTimeout(g.timer);
   live.delete(g.row.id);
 }
@@ -290,6 +377,7 @@ function state(g) {
     first_move_ms: FIRST_MOVE_MS,
     clock: isClock(r) ? { initial_ms: r.clock_ms, increment_ms: r.increment_ms } : null,
     clocks: isClock(r) ? { white: timeLeft(g, 'w'), black: timeLeft(g, 'b') } : null,
+    offers: { draw: SIDE[r.draw_offer] ?? null, takeback: SIDE[r.takeback_offer] ?? null },
     premoves: r.premoves !== 0,
     eval_bar: r.eval_bar === 1,
     server_now: Date.now(),
@@ -458,6 +546,10 @@ function applyMove(g, uci) {
   const mover = g.chess.turn();
   if (clockRunning(g)) r[`${SIDE[mover]}_ms`] = timeLeft(g, mover, now) + r.increment_ms;
   g.chess.move(fromUci(uci));
+  g.gen++;
+  // Moving declines the opponent's draw offer; any takeback request is void. The mover's own draw offer stands.
+  if (r.draw_offer && r.draw_offer !== mover) r.draw_offer = null;
+  r.takeback_offer = null;
   r.moves = r.moves ? `${r.moves} ${uci}` : uci;
   r.last_move_at = now;
   r.deadline_at = clockRunning(g) ? now + r[`${SIDE[g.chess.turn()]}_ms`] : firstMovePhase(g) ? firstDeadline(r, now) : now + r.move_time_ms;
@@ -467,7 +559,129 @@ function applyMove(g, uci) {
   persist(g);
   wake(g);
   engineTurn(g);
+  engineAnswer(g); // a draw offered together with the player's move
   return state(g);
+}
+
+/** Plies to take back so it is `side`'s turn again before its last move; 0 if it has not moved. */
+function plyToUndo(g, side) {
+  const ply = g.chess.history().length;
+  const n = g.chess.turn() === side ? 2 : 1;
+  // White's first move is ply 1, black's is ply 2: undoing n plies needs at least n plies played.
+  return ply >= n ? n : 0;
+}
+
+/** Take back n plies. Clocks are not refunded: each side keeps the time it has now. */
+function undo(g, n) {
+  const r = g.row;
+  const now = Date.now();
+  const turn = g.chess.turn();
+  if (clockRunning(g)) r[`${SIDE[turn]}_ms`] = timeLeft(g, turn, now);
+  const moves = r.moves.split(' ');
+  r.moves = moves.slice(0, moves.length - n).join(' ');
+  g.chess = replay(r);
+  g.gen++;
+  r.draw_offer = null;
+  r.takeback_offer = null;
+  r.last_move_at = r.moves ? now : null;
+  r.deadline_at = clockRunning(g) ? now + r[`${SIDE[g.chess.turn()]}_ms`] : firstMovePhase(g) ? firstDeadline(r, now) : now + r.move_time_ms;
+  schedule(g);
+}
+
+const ACTIONS = { draw: ['offer', 'accept', 'decline'], takeback: ['request', 'accept', 'decline'] };
+
+/** Common start of a player action: the token's side, game must be on. */
+function actor(g, body) {
+  const side = authSide(g, body.token);
+  touch(g, side);
+  needOngoing(g);
+  return side;
+}
+
+/** Commit a state change made by a player action and let the engine react. */
+function commit(g) {
+  persist(g);
+  wake(g);
+  engineAnswer(g);
+  engineTurn(g);
+  return state(g);
+}
+
+function abort(g, body) {
+  const side = actor(g, body);
+  if (!firstMovePhase(g)) throw err(409, 'cannot_abort', 'A game can only be aborted before both sides have made their first move');
+  finish(g, 'aborted', '*', `${SIDE[side]}_aborted`);
+  return commit(g);
+}
+
+function needAction(kind, action) {
+  if (!ACTIONS[kind].includes(action)) throw err(400, 'invalid_action', `"action" must be one of: ${ACTIONS[kind].join(', ')}`);
+}
+
+/** Draw offers: offer (accepts if the opponent offered already), accept, decline. */
+function draw(g, body) {
+  const side = actor(g, body);
+  needAction('draw', body.action);
+  const r = g.row;
+  const theirs = r.draw_offer && r.draw_offer !== side;
+  if (body.action === 'offer' && !theirs) {
+    if (r.draw_offer === side) throw err(409, 'already_offered', 'You already offered a draw');
+    if (g.asked.draw[side] === g.gen) throw err(409, 'already_offered', 'You already offered a draw in this position; make a move first');
+    g.asked.draw[side] = g.gen;
+    r.draw_offer = side;
+  } else if (body.action === 'decline') {
+    if (!theirs) throw err(409, 'no_offer', 'Your opponent has not offered a draw');
+    r.draw_offer = null;
+  } else {
+    if (!theirs) throw err(409, 'no_offer', 'Your opponent has not offered a draw');
+    finish(g, 'draw', '1/2-1/2', 'agreement');
+  }
+  return commit(g);
+}
+
+/** Takebacks: request (undoes the requester's last move once granted), accept, decline. */
+function takeback(g, body) {
+  const side = actor(g, body);
+  needAction('takeback', body.action);
+  const r = g.row;
+  const theirs = r.takeback_offer && r.takeback_offer !== side;
+  if (body.action === 'request' && !theirs) {
+    if (r.takeback_offer === side) throw err(409, 'already_offered', 'You already asked for a takeback');
+    if (!plyToUndo(g, side)) throw err(409, 'nothing_to_take_back', 'You have not made a move yet');
+    if (g.asked.takeback[side] === g.gen) throw err(409, 'already_offered', 'You already asked for a takeback in this position');
+    g.asked.takeback[side] = g.gen;
+    r.takeback_offer = side;
+  } else if (body.action === 'decline') {
+    if (!theirs) throw err(409, 'no_offer', 'Your opponent has not asked for a takeback');
+    r.takeback_offer = null;
+  } else {
+    if (!theirs) throw err(409, 'no_offer', 'Your opponent has not asked for a takeback');
+    undo(g, plyToUndo(g, r.takeback_offer));
+  }
+  return commit(g);
+}
+
+/** PGN of the game so far (finished or ongoing). */
+function pgn(g, site) {
+  const r = g.row;
+  const c = new Chess();
+  for (const uci of r.moves ? r.moves.split(' ') : []) c.move(fromUci(uci));
+  const d = new Date(r.created_at);
+  const date = `${d.getUTCFullYear()}.${String(d.getUTCMonth() + 1).padStart(2, '0')}.${String(d.getUTCDate()).padStart(2, '0')}`;
+  const term = r.status === 'ongoing' ? 'unterminated' : r.status === 'timeout' ? 'time forfeit' : r.status === 'aborted' ? 'abandoned'
+    : [r.status, r.reason].filter(Boolean).join(' ').replace(/_/g, ' ');
+  const headers = [
+    ['Event', `Online game ${r.id}`],
+    ['Site', site],
+    ['Date', date],
+    ['White', r.white_name || 'White'],
+    ['Black', r.black_name || 'Black'],
+    ['Result', r.result],
+    ['TimeControl', isClock(r) ? `${r.clock_ms / 1000}+${r.increment_ms / 1000}` : '-'],
+    ['Termination', term],
+  ];
+  for (const [k, v] of headers) c.setHeader(k, v);
+  return `${c.pgn()}\n`;
 }
 
 const cleanName = (name) => name.replace(/[\u0000-\u001f\u007f]/g, '').trim();
@@ -506,7 +720,7 @@ function wait(g, url, res, side) {
 function waitFor(g, since, side, signal, ms) {
   if (!Number.isInteger(since) || since < 0) throw err(400, 'invalid_since', '"since" must be a non-negative integer ply count');
   const s = state(g);
-  if (s.ply > since || s.status !== 'ongoing') return s;
+  if (s.ply !== since || s.status !== 'ongoing') return s; // != so a takeback below `since` returns at once
   if (side) {
     g.open[side]++;
     if (!checkJoined(g) && presenceSig(g) !== g.presence) wake(g); // tell the others before we start waiting ourselves
@@ -540,15 +754,34 @@ const digest = (s) => createHash('sha256').update(s).digest();
 const withYou = (s, side) => (side ? { ...s, you: SIDE[side] } : s);
 const rpcError = (id, code, message, data) => ({ jsonrpc: '2.0', id, error: { code, message, ...(data ? { data } : {}) } });
 
+/** Remember that a game was used through /mcp, for list_games. */
+function markMcp(g) {
+  if (g.row.mcp) return;
+  g.row.mcp = 1;
+  q.markMcp.run(g.row.id);
+}
+
 function mcpBackend(req, signal) {
   const join = (id, token) => {
     const g = needGame(id);
     const side = token ? authSide(g, token) : null;
-    if (side) touch(g, side);
+    if (side) {
+      touch(g, side);
+      markMcp(g);
+    }
     return [g, side];
   };
+  // Token-authenticated action: fn(g, body) returns the state; adds "you".
+  const act = (fn) => (id, token, extra = {}) => {
+    const [g, side] = join(id, token);
+    return withYou(fn(g, { ...extra, token }), side);
+  };
   return {
-    create: (opts) => create(opts, req),
+    create: (opts) => {
+      const s = create(opts, req);
+      markMcp(load(s.game_id));
+      return s;
+    },
     get: (id, token) => {
       const [g, side] = join(id, token);
       return withYou(state(g), side);
@@ -559,11 +792,33 @@ function mcpBackend(req, signal) {
       if (!s) throw err(499, 'aborted', 'Request closed');
       return withYou(s, side);
     },
-    move: (id, token, uci) => {
-      const g = needGame(id);
-      return withYou(move(g, { token, move: uci }), authSide(g, token));
+    move: (id, token, uci) => act(move)(id, token, { move: uci }),
+    resign: (id, token) => act(resign)(id, token),
+    abort: (id, token) => act(abort)(id, token),
+    draw: (id, token, action) => act(draw)(id, token, { action }),
+    takeback: (id, token, action) => act(takeback)(id, token, { action }),
+    pgn: (id, token) => {
+      const [g] = join(id, token);
+      return pgn(g, siteLink(req, g.row.id));
     },
+    lookup: (token) => findByToken(token),
+    list: () => q.mcpOngoing.all().map(({ id }) => load(id)).filter(Boolean).map(state),
   };
+}
+
+/** Game id the token belongs to, or throws. */
+function findByToken(token) {
+  if (typeof token !== 'string' || !token) throw err(400, 'missing_token', 'A token is required');
+  const h = hash(token);
+  const row = q.byHash.get(h, h);
+  if (!row) throw err(404, 'not_found', 'No game for this token');
+  return row.id;
+}
+
+/** Watch link for PGN "Site" (no scheme: proxies don't reliably forward it), from the forwarded host when present. */
+function siteLink(req, id) {
+  const host = (req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  return host ? `${host}/?game=${id}` : `?game=${id}`;
 }
 
 async function handleMcp(req, res) {
@@ -610,7 +865,8 @@ async function handleMcp(req, res) {
   return send(res, code === RPC.version || code === RPC.headerMismatch || code === RPC.invalid ? 400 : 200, reply);
 }
 
-const ROUTE = /^\/api\/games(?:\/([^/]+)(?:\/(move|resign|wait|name))?)?\/?$/;
+const ROUTE = /^\/api\/games(?:\/([^/]+)(?:\/(move|resign|wait|name|abort|draw|takeback|pgn))?)?\/?$/;
+const POST_ACTIONS = { move, name: rename, resign, abort, draw, takeback };
 
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x');
@@ -619,23 +875,33 @@ async function handle(req, res) {
   const m = url.pathname.match(ROUTE);
   if (!m) throw err(404, 'not_found', 'Unknown endpoint');
   const [, id, action] = m;
-  const want = !id ? 'POST' : !action ? 'GET' : action === 'wait' ? 'GET' : 'POST';
+  const want = !id ? 'POST' : !action || action === 'wait' || action === 'pgn' || id === 'by-token' ? 'GET' : 'POST';
   if (req.method !== want) {
     res.setHeader('Allow', want);
     throw err(405, 'method_not_allowed', `Use ${want} for this endpoint`);
   }
   if (!id) return send(res, 201, create(await readJson(req), req));
-  const g = needGame(id);
+  // Optional "Authorization: Bearer <token>" adds "you": the side that token plays.
+  const bearer = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization || '')?.[1];
+  if (id === 'by-token') {
+    if (action) throw err(404, 'not_found', 'Unknown endpoint');
+    if (!bearer) throw err(400, 'missing_token', 'Send the token as "Authorization: Bearer <token>"');
+  }
+  const g = needGame(id === 'by-token' ? findByToken(bearer) : id);
   if (want === 'GET') {
-    // Optional "Authorization: Bearer <token>" adds "you": the side that token plays.
-    const bearer = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization || '')?.[1];
     const side = bearer ? authSide(g, bearer) : null;
     if (side) touch(g, side);
+    if (action === 'pgn') {
+      res.writeHead(200, { 'Content-Type': 'application/x-chess-pgn; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+        'Content-Disposition': `inline; filename="game-${g.row.id}.pgn"` });
+      return res.end(pgn(g, siteLink(req, g.row.id)));
+    }
     const s = action === 'wait' ? await wait(g, url, res, side) : state(g);
     return s && send(res, 200, side ? { ...s, you: SIDE[side] } : s);
   }
   const body = await readJson(req);
-  return send(res, 200, action === 'move' ? move(g, body) : action === 'name' ? rename(g, body) : resign(g, body));
+  const s = POST_ACTIONS[action](g, body);
+  return send(res, 200, { ...s, you: SIDE[authSide(g, body.token)] });
 }
 
 const server = http.createServer((req, res) => {
