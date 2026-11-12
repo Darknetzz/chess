@@ -540,7 +540,8 @@ button[hidden] { display: none; }
 
 /* Premoves and move confirmation */
 .sq.premove::before { content: ""; position: absolute; inset: 0; background: rgba(40, 110, 220, 0.42); }
-.confirm-bar { display: flex; gap: 8px; justify-content: center; padding: 6px 0; }
+.confirm-bar { display: grid; grid-template-columns: 2fr 1fr; gap: 6px; }
+.confirm-bar button { justify-content: center; padding-top: 10px; padding-bottom: 10px; font-weight: 600; }
 .confirm-bar[hidden] { display: none; }
 .confirm-bar #confirm-move { background: var(--accent); border-color: var(--accent); color: #fff; }
 
