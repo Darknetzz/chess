@@ -33,6 +33,7 @@ export const MOVE_TIMES = [30000, 120000, 600000, 86400000];
 
 export const DEFAULTS = {
   // game
+  playerName: '', // display name in online games ('' = account username)
   mode: 'free',
   side: 'w',
   level: 5,
@@ -98,7 +99,7 @@ export function sanitize(input) {
       continue;
     }
     if (k.endsWith('Color') && !COLOR_RE.test(v)) continue;
-    out[k] = v;
+    out[k] = k === 'playerName' ? v.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40) : v;
   }
   return out;
 }

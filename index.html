@@ -119,6 +119,9 @@
           <label class="tile"><input type="radio" name="opponent" value="bot"><i data-icon="bot"></i><b>External bot</b><small>Get an API token</small></label>
           <label class="tile"><input type="radio" name="opponent" value="analysis"><i data-icon="microscope"></i><b>Analysis board</b><small>Local, both sides, undo</small></label>
         </fieldset>
+        <label class="ng-online">Your name
+          <input id="ng-name" maxlength="40" autocomplete="nickname" placeholder="Shown next to your colour">
+        </label>
         <label class="ng-online">You play
           <select id="ng-side">
             <option value="w">White</option>
@@ -178,6 +181,22 @@
     <div class="buttons one">
       <button type="button" id="fairplay-ok"><i data-icon="check"></i><span class="lbl">I promise</span></button>
     </div>
+  </dialog>
+
+  <dialog id="name-modal" class="fairplay">
+    <form id="name-form">
+      <h2 id="name-title">Join game</h2>
+      <div id="name-fairplay">
+        <p>Please don't use cheats 🙏 No engines, analysis tools or outside help while playing against another person.</p>
+      </div>
+      <div class="group">
+        <label>Your name <input id="name-input" maxlength="40" autocomplete="nickname" placeholder="Shown next to your colour"></label>
+      </div>
+      <p id="name-error" class="modal-error"></p>
+      <div class="buttons one">
+        <button type="submit" id="name-ok"><i data-icon="check"></i><span class="lbl">OK</span></button>
+      </div>
+    </form>
   </dialog>
 
   <dialog id="modal">

@@ -98,6 +98,7 @@ const q = {
   ongoing: db.prepare(`SELECT * FROM games WHERE status = 'ongoing'`),
   save: db.prepare(`UPDATE games SET moves = ?, status = ?, result = ?, reason = ?, last_move_at = ?, deadline_at = ?, white_ms = ?, black_ms = ? WHERE id = ?`),
   restart: db.prepare('UPDATE games SET deadline_at = ?, last_move_at = ? WHERE id = ?'),
+  name: { w: db.prepare('UPDATE games SET white_name = ? WHERE id = ?'), b: db.prepare('UPDATE games SET black_name = ? WHERE id = ?') },
 };
 
 const hash = (t) => createHash('sha256').update(t).digest('hex');
@@ -360,7 +361,7 @@ function create(body, req) {
     const p = body[side] ?? {};
     const name = p && typeof p === 'object' ? (p.name ?? '') : null;
     if (typeof name !== 'string' || name.length > NAME_MAX) throw err(400, 'invalid_player', `"${side}" must be {name} with name up to ${NAME_MAX} chars`);
-    names[side] = name.trim().replace(/[\u0000-\u001f]/g, '');
+    names[side] = cleanName(name);
   }
   let engine = null;
   if (body.engine != null) {
@@ -424,6 +425,20 @@ function applyMove(g, uci) {
   persist(g);
   wake(g);
   engineTurn(g);
+  return state(g);
+}
+
+const cleanName = (name) => name.replace(/[\u0000-\u001f\u007f]/g, '').trim();
+
+/** Set the display name of the token's side (while the game is on). */
+function rename(g, body) {
+  const side = authSide(g, body.token);
+  touch(g, side);
+  needOngoing(g);
+  if (typeof body.name !== 'string' || body.name.length > NAME_MAX) throw err(400, 'invalid_name', `"name" must be a string of up to ${NAME_MAX} chars`);
+  g.row[`${SIDE[side]}_name`] = cleanName(body.name);
+  q.name[side].run(g.row[`${SIDE[side]}_name`], g.row.id);
+  wake(g);
   return state(g);
 }
 
@@ -553,7 +568,7 @@ async function handleMcp(req, res) {
   return send(res, code === RPC.version || code === RPC.headerMismatch || code === RPC.invalid ? 400 : 200, reply);
 }
 
-const ROUTE = /^\/api\/games(?:\/([^/]+)(?:\/(move|resign|wait))?)?\/?$/;
+const ROUTE = /^\/api\/games(?:\/([^/]+)(?:\/(move|resign|wait|name))?)?\/?$/;
 
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x');
@@ -578,7 +593,7 @@ async function handle(req, res) {
     return s && send(res, 200, side ? { ...s, you: SIDE[side] } : s);
   }
   const body = await readJson(req);
-  return send(res, 200, action === 'move' ? move(g, body) : resign(g, body));
+  return send(res, 200, action === 'move' ? move(g, body) : action === 'name' ? rename(g, body) : resign(g, body));
 }
 
 const server = http.createServer((req, res) => {

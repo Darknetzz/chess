@@ -84,4 +84,5 @@ export const botApi = {
   wait: (id, since, token, signal) => req(`${id}/wait?since=${since}`, { token, signal }),
   move: (id, token, move) => req(`${id}/move`, { method: 'POST', body: { token, move } }),
   resign: (id, token) => req(`${id}/resign`, { method: 'POST', body: { token } }),
+  setName: (id, token, name) => req(`${id}/name`, { method: 'POST', body: { token, name } }),
 };

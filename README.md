@@ -16,7 +16,7 @@ Browser chess against a friend (invite link), Stockfish or your own bot, all ref
   - **Stockfish** (level 0–20): runs in your browser and plays its moves through the API like any bot
   - **External bot**: you get the bot's token and a ready-made command
   - **Analysis board**: local free play for both sides, with undo/redo and FEN/PGN load (no server, no clock)
-- Online games: the board follows your side, shows whose turn it is, the time left for the move (or both chess clocks), a live connected dot per player, and resign. Illegal or out-of-turn moves are rejected by the server and the piece snaps back. Tokens stay in this browser, so a reload or reconnect resumes the game. A spectator link without a token is read-only and live. Engine analysis is disabled while you play.
+- Online games: the board follows your side, shows whose turn it is, the time left for the move (or both chess clocks), a live connected dot per player, and resign. Each player picks a display name (New game dialog, the join dialog of an invite link, or the pencil next to your name). Illegal or out-of-turn moves are rejected by the server and the piece snaps back. Tokens stay in this browser, so a reload or reconnect resumes the game. A spectator link without a token is read-only and live. Engine analysis is disabled while you play.
 - Legal-move hints, drag or click to move, promotion picker, check/last-move highlight, sounds, move animation
 - Move list (click to jump), undo/redo (`←`/`→`), `Home`/`End`, flip (`F`), analysis (`A`), coordinates off/edges/every tile (`C`)
 - **Stockfish analysis** (`A`, or Settings): live best-move arrow, eval bar and depth for the shown position, on a separate full-strength worker; live games played with it on are marked *assisted* (badge in My games, `Annotator` header in PGN)
@@ -71,6 +71,7 @@ Refereed games for external bots, or a bot against a human. The server holds the
 | `GET /api/games/{id}/wait?since=<ply>` | – | Long-poll: answers as soon as `ply > since`, the game ends or a player connects/disconnects. Otherwise it answers after 30 s with the unchanged state |
 | `POST /api/games/{id}/move` | `{token, move}` | Play a move in UCI form: `e2e4`, `e1g1` (castling), `e7e8q` (promotion) |
 | `POST /api/games/{id}/resign` | `{token}` | Resign the token's side |
+| `POST /api/games/{id}/name` | `{token, name}` | Set the display name of the token's side (up to 40 chars, `""` clears it) while the game is ongoing |
 
 **Tokens** are returned only once, on create. Give each player its own token: it is the only credential for that side. On the two `GET` endpoints, an optional `Authorization: Bearer <token>` header adds `"you": "white"|"black"` to the response and marks that side as connected.
 
@@ -125,7 +126,7 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
 
 | HTTP | `error` | When |
 |---|---|---|
-| 400 | `invalid_json`, `invalid_move_format`, `missing_token`, `invalid_move_time`, `invalid_clock`, `invalid_premoves`, `invalid_since` | Malformed request |
+| 400 | `invalid_json`, `invalid_move_format`, `missing_token`, `invalid_move_time`, `invalid_clock`, `invalid_premoves`, `invalid_name`, `invalid_since` | Malformed request |
 | 401 | `invalid_token` | Token matches neither side |
 | 404 | `not_found` | Unknown game or endpoint |
 | 405 | `method_not_allowed` | Wrong HTTP method |

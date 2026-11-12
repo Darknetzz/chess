@@ -10,7 +10,7 @@ import { recordToPgn, pgnToRecord, toUci, fromUci, download, today } from './pgn
 import { initSettingsUi } from './settings-ui.js';
 import { initAccount } from './account.js';
 import { initLibrary } from './library.js';
-import { hydrateIcons, setButton } from './icons.js';
+import { hydrateIcons, setButton, icon } from './icons.js';
 import { remoteFromUrl, botApi, netStore, gameLink } from './botgame.js';
 import { premoveDests, applyPremoves } from './premove.js';
 
@@ -893,6 +893,7 @@ function askNewGame() {
   $('#ng-clock-inc').val(state.settings.clockIncrement);
   $('#ng-time').val(String(state.settings.moveTimeMs));
   $('#ng-premoves').prop('checked', state.settings.premoves);
+  $('#ng-name').val(myName());
   syncNewGameForm();
   $('#newgame-modal')[0].showModal();
 }
@@ -925,7 +926,8 @@ async function startFromDialog() {
   const level = Number($('#ng-level').val());
   const tc = dialogTimeControl();
   const allowPremoves = $('#ng-premoves').prop('checked');
-  changeSettings({ side: sideSel, level, ...(opp === 'analysis' ? {} : { ...tc.patch, premoves: allowPremoves }) });
+  const name = String($('#ng-name').val()).trim();
+  changeSettings({ side: sideSel, level, ...(opp === 'analysis' ? {} : { ...tc.patch, premoves: allowPremoves, playerName: name }) });
   if (opp === 'analysis') {
     $('#newgame-modal')[0].close();
     if (remote) return location.assign(`${location.pathname}#analysis`);
@@ -943,7 +945,7 @@ async function startFromDialog() {
     const g = await botApi.create({
       ...tc.opts,
       premoves: allowPremoves,
-      [mine]: { name: api.user?.username || '' },
+      [mine]: { name: myName() },
       [theirs]: { name: theirName },
     });
     const other = g[`${theirs}_token`];
@@ -1119,7 +1121,9 @@ function renderNet() {
     const tags = [COLOR_NAME[c], you && 'you', (p.engine || engineHere) && 'engine', live && !on && 'not connected'].filter(Boolean).join(' · ');
     const cls = s?.status === 'ongoing' && s.turn === side ? 'to-move' : '';
     return `<li class="${cls}"><span class="dot${on ? ' on' : ''}" title="${on ? 'Connected' : 'Not connected'}"></span>`
-      + `<span class="name">${escHtml(p.name || COLOR_NAME[c])}</span><span class="tag">${tags}</span></li>`;
+      + `<span class="name">${escHtml(p.name || COLOR_NAME[c])}</span><span class="tag">${tags}</span>`
+      + (you && live ? `<button type="button" class="link rename" title="Change your name" aria-label="Change your name">${icon('pencil')}</button>` : '')
+      + '</li>';
   });
   $('#net-players').html(rows.join(''));
   if (s) {
@@ -1259,6 +1263,7 @@ function applyServer(s) {
     $('#resign').prop('disabled', !remote.side || isOver());
     $('#analysis-btn').prop('disabled', netPlaying());
     if (prev?.status !== s.status) refreshAnalysis();
+    renderCaptured(piecesMap()); // player names may have changed
     renderNet();
     renderStatus();
   } else if (isPrefix && following && srv.length === local.length + 1) {
@@ -1355,6 +1360,11 @@ async function remoteStart() {
     return update();
   }
   applyServer(s);
+  if (joinedByLink && remote.side && s.status === 'ongoing') {
+    // Invite opened: pick a name unless this side already has one (then just the fair-play note).
+    if (s.players?.[remote.side === 'w' ? 'white' : 'black']?.name) fairPlayOnce();
+    else askName(true);
+  }
   setInterval(() => {
     if (remote.server?.status !== 'ongoing') return;
     renderStatus();
@@ -1395,26 +1405,69 @@ async function remoteStart() {
 // ---- Fair play reminder (once per browser, before the first game against a person) ----
 const FAIRPLAY_KEY = 'chess.fairplay.v1';
 
-function fairPlayOnce() {
+function fairPlaySeen() {
   try {
-    if (localStorage.getItem(FAIRPLAY_KEY)) return Promise.resolve();
+    return !!localStorage.getItem(FAIRPLAY_KEY);
   } catch {
-    /* storage unavailable: show it */
+    return false; // storage unavailable: show it
   }
+}
+
+function markFairPlaySeen() {
+  try {
+    localStorage.setItem(FAIRPLAY_KEY, '1');
+  } catch {
+    /* ignore */
+  }
+}
+
+function fairPlayOnce() {
+  if (fairPlaySeen()) return Promise.resolve();
   const dlg = $('#fairplay-modal')[0];
   return new Promise((resolve) => {
     dlg.addEventListener('close', () => {
-      try {
-        localStorage.setItem(FAIRPLAY_KEY, '1');
-      } catch {
-        /* ignore */
-      }
+      markFairPlaySeen();
       resolve();
     }, { once: true });
     dlg.showModal();
   });
 }
 $('#fairplay-ok').on('click', () => $('#fairplay-modal')[0].close());
+
+// ---- Player name in online games ----------------------------------------------------
+/** Name to play under: the chosen one, else the account username. */
+const myName = () => state.settings.playerName || api.user?.username || '';
+
+/** Name dialog: on joining by invite (with the fair-play note the first time) or from the pencil in the panel. */
+function askName(joining) {
+  const fair = joining && !fairPlaySeen();
+  $('#name-title').text(joining ? 'Join game' : 'Your name');
+  $('#name-fairplay').prop('hidden', !fair);
+  const mine = remote.server?.players?.[remote.side === 'w' ? 'white' : 'black']?.name;
+  $('#name-input').val(mine || myName());
+  $('#name-error').text('');
+  const dlg = $('#name-modal')[0];
+  dlg.addEventListener('close', () => fair && markFairPlaySeen(), { once: true });
+  dlg.showModal();
+  $('#name-input').trigger('select');
+}
+
+$('#name-form').on('submit', async (e) => {
+  e.preventDefault();
+  const name = String($('#name-input').val()).trim();
+  $('#name-ok').prop('disabled', true);
+  try {
+    const s = await botApi.setName(remote.id, remote.token, name);
+    changeSettings({ playerName: name });
+    if (!remote.busy) applyServer(s);
+    $('#name-modal')[0].close();
+  } catch (err) {
+    $('#name-error').text(`Could not set the name: ${err.message}`);
+  } finally {
+    $('#name-ok').prop('disabled', false);
+  }
+});
+$('#net-players').on('click', '.rename', () => askName(false));
 
 // ---- Boot ------------------------------------------------------------------
 if (!remote) restore();
@@ -1441,7 +1494,6 @@ api.init().then((user) => {
   if (remote) maybeSaveNet();
 });
 if (remote) remoteStart();
-if (remote && joinedByLink) fairPlayOnce();
 else if (location.hash === '#analysis') {
   // "Analysis board" chosen while in an online game: fresh local board.
   history.replaceState(null, '', location.pathname);
