@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Chess } from '../vendor/chess.js/chess.js';
 import { enginePool } from './engine.mjs';
+import { mcpServer, SUPPORTED, META_VERSION, E as RPC } from './mcp-core.mjs';
 
 const envInt = (k, d) => (Number.isInteger(+process.env[k]) && +process.env[k] > 0 ? +process.env[k] : d);
 const PORT = envInt('PORT', 3000);
@@ -227,15 +228,18 @@ function send(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-async function readJson(req) {
+async function readBody(req, max) {
   let size = 0;
   const chunks = [];
   for await (const c of req) {
     size += c.length;
-    if (size > MAX_BODY) throw err(413, 'body_too_large', `Request body exceeds ${MAX_BODY} bytes`);
+    if (size > max) throw err(413, 'body_too_large', `Request body exceeds ${max} bytes`);
     chunks.push(c);
   }
-  const raw = Buffer.concat(chunks).toString('utf8').trim();
+  return Buffer.concat(chunks).toString('utf8').trim();
+}
+async function readJson(req) {
+  const raw = await readBody(req, MAX_BODY);
   if (!raw) return {};
   let data;
   try {
@@ -369,10 +373,16 @@ function resign(g, body) {
 
 /** Long-poll. A waiter also wakes when either side connects or disconnects (same ply, new `players`). */
 function wait(g, url, res, side) {
-  const s = state(g);
   const raw = url.searchParams.get('since');
-  const since = raw === null ? s.ply : Number(raw);
+  const since = raw === null ? state(g).ply : Number(raw);
+  const ac = new AbortController();
+  res.on('close', () => ac.abort());
+  return waitFor(g, since, side, ac.signal, WAIT_MS);
+}
+// Resolves with the state once ply > since, the game ends, presence changes or `ms` pass; null if aborted.
+function waitFor(g, since, side, signal, ms) {
   if (!Number.isInteger(since) || since < 0) throw err(400, 'invalid_since', '"since" must be a non-negative integer ply count');
+  const s = state(g);
   if (s.ply > since || s.status !== 'ongoing') return s;
   if (side) {
     g.open[side]++;
@@ -391,10 +401,90 @@ function wait(g, url, res, side) {
       }
       resolve(st);
     };
-    const t = setTimeout(() => done(state(g)), WAIT_MS);
+    const t = setTimeout(() => done(state(g)), ms);
     g.waiters.add(done);
-    res.on('close', () => done(null));
+    if (signal.aborted) done(null);
+    else signal.addEventListener('abort', () => done(null), { once: true });
   });
+}
+
+// ---------- MCP over Streamable HTTP (POST /mcp), same tools as bot/mcp.mjs, game logic in-process ----------
+const MCP_TOKEN = process.env.MCP_TOKEN || '';
+const MCP_ORIGINS = new Set((process.env.MCP_ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean));
+const MCP_WAIT_MS = Math.min(WAIT_MS, 25_000); // stay under common proxy read timeouts
+const MCP_MAX_BODY = 16_384;
+const digest = (s) => createHash('sha256').update(s).digest();
+const withYou = (s, side) => (side ? { ...s, you: SIDE[side] } : s);
+const rpcError = (id, code, message, data) => ({ jsonrpc: '2.0', id, error: { code, message, ...(data ? { data } : {}) } });
+
+function mcpBackend(req, signal) {
+  const join = (id, token) => {
+    const g = needGame(id);
+    const side = token ? authSide(g, token) : null;
+    if (side) touch(g, side);
+    return [g, side];
+  };
+  return {
+    create: (opts) => create(opts, req),
+    get: (id, token) => {
+      const [g, side] = join(id, token);
+      return withYou(state(g), side);
+    },
+    wait: async (id, since, token) => {
+      const [g, side] = join(id, token);
+      const s = await waitFor(g, since, side, signal, MCP_WAIT_MS);
+      if (!s) throw err(499, 'aborted', 'Request closed');
+      return withYou(s, side);
+    },
+    move: (id, token, uci) => {
+      const g = needGame(id);
+      return withYou(move(g, { token, move: uci }), authSide(g, token));
+    },
+  };
+}
+
+async function handleMcp(req, res) {
+  if (!MCP_TOKEN) throw err(404, 'not_found', 'Unknown endpoint');
+  // DNS-rebinding guard: browsers always send Origin; MCP clients normally don't.
+  const origin = req.headers.origin;
+  if (origin !== undefined && !MCP_ORIGINS.has(origin)) return send(res, 403, rpcError(null, RPC.invalid, `Origin not allowed: ${origin}`));
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    throw err(405, 'method_not_allowed', 'Use POST for /mcp (no SSE stream is offered)');
+  }
+  const bearer = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization || '')?.[1] || '';
+  if (!timingSafeEqual(digest(bearer), digest(MCP_TOKEN))) {
+    res.setHeader('WWW-Authenticate', 'Bearer');
+    throw err(401, 'unauthorized', 'Missing or invalid MCP bearer token');
+  }
+  let msg;
+  try {
+    msg = JSON.parse(await readBody(req, MCP_MAX_BODY));
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    return send(res, 400, rpcError(null, RPC.parse, 'Parse error'));
+  }
+  if (Array.isArray(msg)) return send(res, 400, rpcError(null, RPC.invalid, 'Batching is not supported; send one JSON-RPC message per request'));
+  const id = msg?.id ?? null;
+  const header = req.headers['mcp-protocol-version'];
+  if (header !== undefined && !SUPPORTED.includes(header)) {
+    return send(res, 400, rpcError(id, RPC.version, `Unsupported protocol version: ${header}`, { supported: SUPPORTED, requested: header }));
+  }
+  const bodyVersion = msg?.params?._meta?.[META_VERSION];
+  if (bodyVersion !== undefined && bodyVersion !== header) {
+    return send(res, 400, rpcError(id, RPC.headerMismatch, 'MCP-Protocol-Version header must match _meta protocolVersion'));
+  }
+  // Stateless: legacy clients without the header are treated as 2025-03-26, as the spec allows.
+  const session = { version: header ?? (bodyVersion === undefined ? '2025-03-26' : undefined) };
+  const ac = new AbortController();
+  res.on('close', () => ac.abort());
+  const reply = await mcpServer(mcpBackend(req, ac.signal)).handle(msg, session);
+  if (!reply) {
+    res.writeHead(202, { 'Cache-Control': 'no-store' });
+    return res.end();
+  }
+  const code = reply.error?.code;
+  return send(res, code === RPC.version || code === RPC.headerMismatch || code === RPC.invalid ? 400 : 200, reply);
 }
 
 const ROUTE = /^\/api\/games(?:\/([^/]+)(?:\/(move|resign|wait))?)?\/?$/;
@@ -402,6 +492,7 @@ const ROUTE = /^\/api\/games(?:\/([^/]+)(?:\/(move|resign|wait))?)?\/?$/;
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/healthz') return send(res, 200, { ok: true });
+  if (url.pathname === '/mcp') return handleMcp(req, res);
   const m = url.pathname.match(ROUTE);
   if (!m) throw err(404, 'not_found', 'Unknown endpoint');
   const [, id, action] = m;
@@ -443,7 +534,7 @@ for (const row of q.ongoing.all()) {
   load(row.id);
 }
 
-server.listen(PORT, () => console.log(`bot api on :${PORT}, ${live.size} live game(s), data ${DATA_DIR}`));
+server.listen(PORT, () => console.log(`bot api on :${PORT}, ${live.size} live game(s), data ${DATA_DIR}, MCP ${MCP_TOKEN ? 'on /mcp' : 'off (no MCP_TOKEN)'}`));
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, () => {
