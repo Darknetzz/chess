@@ -91,9 +91,18 @@ if (db.prepare('PRAGMA user_version').get().user_version < 3) {
     COMMIT;
   `);
 }
+if (db.prepare('PRAGMA user_version').get().user_version < 4) {
+  // Game rule set by the host: may players see the evaluation bar in the web client?
+  db.exec(`
+    BEGIN;
+    ALTER TABLE games ADD COLUMN eval_bar INTEGER NOT NULL DEFAULT 0;
+    PRAGMA user_version = 4;
+    COMMIT;
+  `);
+}
 const q = {
   insert: db.prepare(`INSERT INTO games (id, created_at, white_hash, black_hash, move_time_ms, deadline_at, white_name, black_name, engine_side, engine_level,
-    clock_ms, increment_ms, white_ms, black_ms, premoves) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+    clock_ms, increment_ms, white_ms, black_ms, premoves, eval_bar) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   get: db.prepare('SELECT * FROM games WHERE id = ?'),
   ongoing: db.prepare(`SELECT * FROM games WHERE status = 'ongoing'`),
   save: db.prepare(`UPDATE games SET moves = ?, status = ?, result = ?, reason = ?, last_move_at = ?, deadline_at = ?, white_ms = ?, black_ms = ? WHERE id = ?`),
@@ -252,6 +261,7 @@ function state(g) {
     clock: isClock(r) ? { initial_ms: r.clock_ms, increment_ms: r.increment_ms } : null,
     clocks: isClock(r) ? { white: timeLeft(g, 'w'), black: timeLeft(g, 'b') } : null,
     premoves: r.premoves !== 0,
+    eval_bar: r.eval_bar === 1,
     server_now: Date.now(),
     created_at: r.created_at,
     last_move_at: r.last_move_at,
@@ -373,13 +383,14 @@ function create(body, req) {
     names[side] ||= `Stockfish (level ${level})`;
   }
   if (body.premoves != null && typeof body.premoves !== 'boolean') throw err(400, 'invalid_premoves', '"premoves" must be true or false');
+  if (body.eval_bar != null && typeof body.eval_bar !== 'boolean') throw err(400, 'invalid_eval_bar', '"eval_bar" must be true or false');
   rateLimit(clientIp(req));
   const tokens = { white: randomBytes(32).toString('base64url'), black: randomBytes(32).toString('base64url') };
   const now = Date.now();
   let id;
   do id = newId(); while (q.get.get(id));
   q.insert.run(id, now, hash(tokens.white), hash(tokens.black), ms, now + ms, names.white, names.black, engine?.side ?? null, engine?.level ?? null,
-    clock?.initial ?? null, clock?.inc ?? null, clock?.initial ?? null, clock?.initial ?? null, body.premoves === false ? 0 : 1);
+    clock?.initial ?? null, clock?.inc ?? null, clock?.initial ?? null, clock?.initial ?? null, body.premoves === false ? 0 : 1, body.eval_bar === true ? 1 : 0);
   const g = load(id);
   const out = { ...state(g) };
   // The server plays the engine side, so its token is never handed out.

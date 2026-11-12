@@ -44,6 +44,7 @@ export const TOOLS = [
         clock_initial_ms: int('Chess clock: time per side in ms (15000 to 10800000). Not with move_time_ms', 15_000, 10_800_000),
         clock_increment_ms: int('Chess clock: time added after each move in ms (0 to 180000), only with clock_initial_ms', 0, 180_000),
         premoves: { type: 'boolean', description: 'Allow players to queue moves (premoves) in the web client. Default true' },
+        eval_bar: { type: 'boolean', description: 'Allow players to show the Stockfish evaluation bar (winning chances) in the web client. Default false' },
         white_name: str('Display name for white (max 40 chars)', { maxLength: 40 }),
         black_name: str('Display name for black (max 40 chars)', { maxLength: 40 }),
         engine_side: str('Let the server play this side with Stockfish', { enum: ['white', 'black'] }),
@@ -139,6 +140,10 @@ async function callTool(backend, name, a = {}, link) {
       if (a.premoves !== undefined) {
         if (typeof a.premoves !== 'boolean') fail('"premoves" must be a boolean');
         opts.premoves = a.premoves;
+      }
+      if (a.eval_bar !== undefined) {
+        if (typeof a.eval_bar !== 'boolean') fail('"eval_bar" must be a boolean');
+        opts.eval_bar = a.eval_bar;
       }
       if (optStr(a.white_name, 'white_name')) opts.white = { name: a.white_name };
       if (optStr(a.black_name, 'black_name')) opts.black = { name: a.black_name };

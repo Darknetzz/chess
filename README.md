@@ -16,10 +16,11 @@ Browser chess against a friend (invite link), Stockfish or your own bot, all ref
   - **Stockfish** (level 0–20): runs in your browser and plays its moves through the API like any bot
   - **External bot**: you get the bot's token and a ready-made command
   - **Analysis board**: local free play for both sides, with undo/redo and FEN/PGN load (no server, no clock)
-- Online games: the board follows your side, shows whose turn it is, the time left for the move (or both chess clocks), a live connected dot per player, and resign. Each player picks a display name (New game dialog, the join dialog of an invite link, or the pencil next to your name). Illegal or out-of-turn moves are rejected by the server and the piece snaps back. Tokens stay in this browser, so a reload or reconnect resumes the game. A spectator link without a token is read-only and live. Engine analysis is disabled while you play.
+- Online games: the board follows your side, shows whose turn it is, the time left for the move (or both chess clocks), a live connected dot per player, and resign. Each player picks a display name (New game dialog, the join dialog of an invite link, or the pencil next to your name). Illegal or out-of-turn moves are rejected by the server and the piece snaps back. Tokens stay in this browser, so a reload or reconnect resumes the game. A spectator link without a token is read-only and live. Engine analysis is disabled while you play (the eval bar only if the host allowed it).
 - Legal-move hints, drag or click to move, promotion picker, check/last-move highlight, sounds, move animation
-- Move list (click to jump), undo/redo (`←`/`→`), `Home`/`End`, flip (`F`), analysis (`A`), coordinates off/edges/every tile (`C`)
+- Move list (click to jump), undo/redo (`←`/`→`), `Home`/`End`, flip (`F`), analysis (`A`), eval bar (`E`), coordinates off/edges/every tile (`C`)
 - **Stockfish analysis** (`A`, or Settings): live best-move arrow, eval bar and depth for the shown position, on a separate full-strength worker; live games played with it on are marked *assisted* (badge in My games, `Annotator` header in PGN)
+- **Eval bar** (`E`, or the New game dialog): just the evaluation bar plus White/Black winning chances in %, no best move. Chosen per game; marks the game *assisted* like analysis. In online games it's a rule the host allows (off by default), shown to both players
 - **Settings** (`S`): board themes + custom colours, highlight colour, 7 piece sets, board size, light/dark UI, animation speed, sounds/volume, toggles for hints/highlights/auto-queen/confirmations
 - **Premoves**: in online games, queue one or more moves during the opponent's turn; each is played the moment it's your turn if it's legal (otherwise the queue is dropped). Right-click the board or press `Esc` to clear. The host turns premoves on or off for the game in the New game dialog.
 - **Confirm moves** (Settings, off by default): in online games a move is shown on the board and only sent after *Confirm move* (`Enter`); *Cancel* (`Esc`) takes it back
@@ -79,6 +80,7 @@ Refereed games for external bots, or a bot against a human. The server holds the
 - `move_time_ms`: per-move time limit (see *Time control*)
 - `clock`: `{"initial_ms": 15000-10800000, "increment_ms": 0-180000}`, a chess clock instead of a per-move limit. Not together with `move_time_ms`
 - `premoves`: `true` (default) or `false`. Whether the web board lets players queue moves during the opponent's turn. A game rule chosen by the host; the server can't tell a premove from a fast move, so it is enforced by the web client only
+- `eval_bar`: `true` or `false` (default). Whether players may show the Stockfish evaluation bar (winning chances) in the web client while the game is going on. A game rule chosen by the host, enforced by the web client only
 - `white` / `black`: `{"name": "…"}`, a display name of up to 40 characters
 - `engine`: `{"side": "white"|"black", "level": 0-20}`. The server plays that side with Stockfish, and its token is not returned. This is meant for headless games such as bot vs Stockfish. Engine resources are capped: see `CHESS_BOT_ENGINE_*`. When a human plays Stockfish on the board, Stockfish runs in the browser instead and holds a normal token.
 
@@ -110,6 +112,7 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
   "clock": null,                // clock games: { "initial_ms": 300000, "increment_ms": 3000 }
   "clocks": null,               // clock games: time left now, { "white": 297512, "black": 300000 }
   "premoves": true,             // the host allows premoves in the web client
+  "eval_bar": false,            // the host allows the evaluation bar in the web client
   "server_now": 1794420812000,  // server time of this response, to correct for client clock skew
   "created_at": 1794420808543,  // all times: Unix epoch milliseconds
   "last_move_at": 1794420810000,// null before the first move
@@ -126,7 +129,7 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
 
 | HTTP | `error` | When |
 |---|---|---|
-| 400 | `invalid_json`, `invalid_move_format`, `missing_token`, `invalid_move_time`, `invalid_clock`, `invalid_premoves`, `invalid_name`, `invalid_since` | Malformed request |
+| 400 | `invalid_json`, `invalid_move_format`, `missing_token`, `invalid_move_time`, `invalid_clock`, `invalid_premoves`, `invalid_eval_bar`, `invalid_name`, `invalid_since` | Malformed request |
 | 401 | `invalid_token` | Token matches neither side |
 | 404 | `not_found` | Unknown game or endpoint |
 | 405 | `method_not_allowed` | Wrong HTTP method |
@@ -156,7 +159,7 @@ The same game API as [MCP](https://modelcontextprotocol.io) tools, so AI agents 
 
 | Tool | Arguments | Does |
 |---|---|---|
-| `create_game` | `move_time_ms?` or `clock_initial_ms?` + `clock_increment_ms?`, `premoves?`, `white_name?`, `black_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20) | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play |
+| `create_game` | `move_time_ms?` or `clock_initial_ms?` + `clock_increment_ms?`, `premoves?`, `eval_bar?`, `white_name?`, `black_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20) | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play |
 | `make_move` | `game_id`, `token`, `move` (UCI) | Play a move; an illegal move returns an error listing the legal moves |
 | `get_board` | `game_id`, `token?`, `wait_since_ply?` | ASCII board, FEN, moves, legal moves, status, time left. With `wait_since_ply` it long-polls (up to ~25 s) for the opponent's move |
 

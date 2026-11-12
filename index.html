@@ -86,6 +86,7 @@
         <button type="button" id="flip" title="Flip board (F)"><i data-icon="arrow-up-down"></i><span class="lbl">Flip board</span></button>
         <button type="button" id="coords" title="Cycle coordinates (C)"><i data-icon="grid-3x3"></i><span class="lbl">Coordinates</span></button>
         <button type="button" id="analysis-btn" title="Stockfish analysis: best move + evaluation (A)" aria-pressed="false"><i data-icon="cpu"></i><span class="lbl">Analysis</span></button>
+        <button type="button" id="evalbar-btn" title="Evaluation bar: winning chances, no best move (E)" aria-pressed="false"><i data-icon="chart-column"></i><span class="lbl">Eval bar</span></button>
       </div>
 
       <div class="nav">
@@ -104,7 +105,7 @@
         <button type="button" id="settings-btn" title="Settings (S)"><i data-icon="settings"></i><span class="lbl">Settings</span></button>
       </div>
 
-      <p class="hint-text"><i data-icon="keyboard"></i> Keys: <kbd>F</kbd> flip · <kbd>C</kbd> coords · <kbd>A</kbd> analysis · <kbd>N</kbd> new · <kbd>←</kbd>/<kbd>→</kbd> undo/redo · <kbd>G</kbd> games · <kbd>S</kbd> settings</p>
+      <p class="hint-text"><i data-icon="keyboard"></i> Keys: <kbd>F</kbd> flip · <kbd>C</kbd> coords · <kbd>A</kbd> analysis · <kbd>E</kbd> eval bar · <kbd>N</kbd> new · <kbd>←</kbd>/<kbd>→</kbd> undo/redo · <kbd>G</kbd> games · <kbd>S</kbd> settings</p>
     </aside>
   </main>
 
@@ -157,6 +158,7 @@
         </div>
         <p class="ng-online ng-clock-note muted">Clocks start once both sides have made their first move; a side that doesn't make its first move in time aborts the game.</p>
         <label class="ng-online check"><input type="checkbox" id="ng-premoves"> Allow premoves (queue moves during the opponent's turn)</label>
+        <label class="check"><input type="checkbox" id="ng-evalbar"> <span><span id="ng-evalbar-verb">Show</span> evaluation bar (winning chances; marks the game as assisted)</span></label>
         <label class="ng-online ng-move">Time per move (running out loses)
           <select id="ng-time">
             <option value="30000">30 seconds</option>

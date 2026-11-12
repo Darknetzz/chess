@@ -41,6 +41,7 @@ const state = {
   createdAt: null,
   gameToken: 0, // bumps whenever a different game becomes live
   assisted: false, // Stockfish analysis was shown during the live game
+  evalBar: false, // this game shows the eval bar (chosen in the New game dialog or with E)
   settings: Settings.loadLocal(),
   replay: null, // { rec, live: snapshot of the live game }
 };
@@ -89,8 +90,8 @@ const isOver = () => (remote ? remote.server?.status !== 'ongoing' : game.isGame
 
 // ---- Persistence of the live game -------------------------------------------
 function liveSnapshot() {
-  const { startFen, history, ply, humanColor, resigned, gameId, createdAt, gameToken, assisted } = state;
-  return { startFen, history, ply, humanColor, resigned, gameId, createdAt, gameToken, assisted };
+  const { startFen, history, ply, humanColor, resigned, gameId, createdAt, gameToken, assisted, evalBar } = state;
+  return { startFen, history, ply, humanColor, resigned, gameId, createdAt, gameToken, assisted, evalBar };
 }
 
 function persist() {
@@ -128,6 +129,7 @@ function restore() {
     state.gameId = typeof data.gameId === 'number' || typeof data.gameId === 'string' ? data.gameId : null;
     state.createdAt = Number.isInteger(data.createdAt) ? data.createdAt : null;
     state.assisted = data.assisted === true;
+    state.evalBar = data.evalBar === true;
   } catch {
     /* corrupt saved game: start fresh */
   }
@@ -431,6 +433,7 @@ function newGame(fen = DEFAULT_POSITION, history = []) {
   state.ply = history.length;
   state.resigned = null;
   state.assisted = false;
+  state.evalBar = state.settings.evalBar;
   resolveHumanColor();
   rebuild();
   engine.newGame().catch(() => {});
@@ -651,7 +654,6 @@ function update() {
     setButton($('#replay-continue'), null, r.result === '*' && atEnd() ? 'Resume game' : 'Continue from here');
   }
   $('#resign').prop('disabled', remote ? !remote.side || isOver() : !inProgress());
-  $('#analysis-btn').prop('disabled', netPlaying());
   $('#modal-load').prop('hidden', !!remote);
   $('#confirm-bar').prop('hidden', !pendingMove);
   renderNet();
@@ -667,9 +669,16 @@ function update() {
 let analysisKey = null; // position currently analysed (null = analyzer idle)
 let lastEval = { info: null, result: null, fen: null };
 
+/** The eval bar may be shown: always, except while playing an online game whose host didn't allow it. */
+const evalAllowed = () => !netPlaying() || remote.server?.eval_bar === true;
+/** Full analysis (best-move arrow + line): never while playing an online game. */
+const fullAnalysis = () => state.settings.analysis && !netPlaying();
+
 function refreshAnalysis() {
-  const on = state.settings.analysis && !netPlaying(); // no engine help while playing an online game
-  $('#analysis-btn').attr('aria-pressed', String(on));
+  const full = fullAnalysis();
+  const on = full || (state.evalBar && evalAllowed());
+  $('#analysis-btn').attr('aria-pressed', String(full)).prop('disabled', netPlaying());
+  $('#evalbar-btn').attr('aria-pressed', String(on)).prop('disabled', full || !evalAllowed());
   $('#eval-bar, #analysis-info').prop('hidden', !on);
   if (!on) {
     if (analysisKey !== null) analyzer.terminate();
@@ -677,6 +686,8 @@ function refreshAnalysis() {
     board.setArrows([]);
     return;
   }
+  // Arrow follows the mode for a position already analysed (switching bar ⇄ full analysis).
+  board.setArrows(full && lastEval.info && lastEval.fen === game.fen() ? [fromUci(lastEval.info.best)] : []);
   const over = isOver();
   if (!state.replay && !over && !state.assisted) {
     state.assisted = true; // saved with the game (saveSig includes it)
@@ -696,7 +707,7 @@ function refreshAnalysis() {
         .analyze(fen, (info) => {
           if (analysisKey !== key) return;
           lastEval = { info, result: null, fen };
-          board.setArrows([fromUci(info.best)]);
+          board.setArrows(fullAnalysis() ? [fromUci(info.best)] : []);
           renderEval();
         })
         .catch((err) => {
@@ -711,12 +722,23 @@ function refreshAnalysis() {
 const fmtEval = ({ cp, mate }) =>
   mate !== null ? `#${mate < 0 ? '−' : ''}${Math.abs(mate)}` : `${cp < 0 ? '−' : '+'}${(Math.abs(cp) / 100).toFixed(1)}`;
 
+/** White's winning chances in % (Lichess's curve over the white-relative centipawn score). */
+const winPct = ({ cp, mate }) => (mate !== null ? (mate > 0 ? 100 : 0) : 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * cp)) - 1));
+
+/** "White 85%" / "Even 50%": the side ahead and its winning chances. */
+function fmtChances(pct) {
+  const w = Math.round(pct);
+  if (w > 46 && w < 54) return `Even ${w}%`;
+  return w >= 50 ? `White ${w}%` : `Black ${100 - w}%`;
+}
+
 function renderEval() {
   const { info, result, fen } = lastEval;
   const flipped = state.settings.orientation === 'b';
   let pct = 50;
   let text = '';
   let line;
+  let title = 'Stockfish evaluation';
   if (result) {
     pct = result === '1-0' ? 100 : result === '0-1' ? 0 : 50;
     text = result === '1/2-1/2' ? '½' : result;
@@ -724,17 +746,22 @@ function renderEval() {
   } else if (!info) {
     line = 'Analysing…';
   } else {
-    pct = info.mate !== null ? (info.mate > 0 ? 100 : 0) : 50 + 50 * Math.tanh(info.cp / 400);
+    pct = winPct(info);
     text = fmtEval(info);
-    let san = info.best;
-    try {
-      san = new Chess(fen).move(fromUci(info.best)).san;
-    } catch {
-      /* keep UCI */
+    const w = Math.round(pct);
+    title = `Winning chances: White ${w}% · Black ${100 - w}% (Stockfish ${text})`;
+    line = `${fmtChances(pct)} · ${text} · depth ${info.depth}`;
+    if (fullAnalysis()) {
+      let san = info.best;
+      try {
+        san = new Chess(fen).move(fromUci(info.best)).san;
+      } catch {
+        /* keep UCI */
+      }
+      line += ` · best ${san}`;
     }
-    line = `${text} · depth ${info.depth} · best ${san}`;
   }
-  $('#eval-bar').toggleClass('flipped', flipped).find('.eval-fill').css('height', `${pct}%`);
+  $('#eval-bar').attr('title', title).toggleClass('flipped', flipped).find('.eval-fill').css('height', `${pct}%`);
   const whiteAhead = pct >= 50;
   const atBottom = whiteAhead !== flipped; // the leader's end of the bar
   $('#eval-text').text(text).toggleClass('bottom', atBottom).toggleClass('top', !atBottom)
@@ -882,6 +909,13 @@ function toggleAnalysis() {
   changeSettings({ analysis: !state.settings.analysis });
 }
 
+function toggleEvalBar() {
+  if (fullAnalysis() || !evalAllowed()) return;
+  state.evalBar = !state.evalBar;
+  persist();
+  refreshAnalysis();
+}
+
 function askNewGame() {
   if (state.replay) return;
   $('#ng-error').text('');
@@ -893,6 +927,7 @@ function askNewGame() {
   $('#ng-clock-inc').val(state.settings.clockIncrement);
   $('#ng-time').val(String(state.settings.moveTimeMs));
   $('#ng-premoves').prop('checked', state.settings.premoves);
+  $('#ng-evalbar').prop('checked', state.settings.evalBar);
   $('#ng-name').val(myName());
   syncNewGameForm();
   $('#newgame-modal')[0].showModal();
@@ -901,6 +936,7 @@ function askNewGame() {
 function syncNewGameForm() {
   const opp = ngOpponent();
   $('#newgame-form .ng-online').prop('hidden', opp === 'analysis');
+  $('#ng-evalbar-verb').text(opp === 'analysis' ? 'Show' : 'Allow the');
   $('#newgame-form .ng-stockfish').prop('hidden', opp !== 'stockfish');
   const tc = String($('#ng-tc').val());
   const online = opp !== 'analysis';
@@ -926,8 +962,9 @@ async function startFromDialog() {
   const level = Number($('#ng-level').val());
   const tc = dialogTimeControl();
   const allowPremoves = $('#ng-premoves').prop('checked');
+  const evalBar = $('#ng-evalbar').prop('checked');
   const name = String($('#ng-name').val()).trim();
-  changeSettings({ side: sideSel, level, ...(opp === 'analysis' ? {} : { ...tc.patch, premoves: allowPremoves, playerName: name }) });
+  changeSettings({ side: sideSel, level, evalBar, ...(opp === 'analysis' ? {} : { ...tc.patch, premoves: allowPremoves, playerName: name }) });
   if (opp === 'analysis') {
     $('#newgame-modal')[0].close();
     if (remote) return location.assign(`${location.pathname}#analysis`);
@@ -945,6 +982,7 @@ async function startFromDialog() {
     const g = await botApi.create({
       ...tc.opts,
       premoves: allowPremoves,
+      eval_bar: evalBar,
       [mine]: { name: myName() },
       [theirs]: { name: theirName },
     });
@@ -991,6 +1029,7 @@ $('#resign').on('click', resign);
 $('#flip').on('click', flip);
 $('#coords').on('click', cycleCoords);
 $('#analysis-btn').on('click', toggleAnalysis);
+$('#evalbar-btn').on('click', toggleEvalBar);
 $('#undo').on('click', undo);
 $('#redo').on('click', redo);
 $('#first').on('click', () => goTo(0));
@@ -1030,6 +1069,7 @@ $(document).on('keydown', (e) => {
   if (k === 'f') flip();
   else if (k === 'c') cycleCoords();
   else if (k === 'a') toggleAnalysis();
+  else if (k === 'e') toggleEvalBar();
   else if (k === 'n' && !state.replay) askNewGame();
   else if (k === 'g') library.open();
   else if (k === 's') settingsUi.open();
@@ -1128,7 +1168,7 @@ function renderNet() {
   $('#net-players').html(rows.join(''));
   if (s) {
     const time = s.clock ? `${tcLabel(s.clock)} clock` : `${fmtLeft(s.move_time_ms)} per move`;
-    $('#net-rules').text(`${time} · premoves ${s.premoves === false ? 'off' : 'allowed'}`);
+    $('#net-rules').text(`${time} · premoves ${s.premoves === false ? 'off' : 'allowed'} · eval bar ${s.eval_bar ? 'allowed' : 'off'}`);
   }
   const over = !!s && s.status !== 'ongoing';
   const other = remote.side ? COLOR_NAME[opposite(remote.side)] : '';
@@ -1193,7 +1233,7 @@ function maybeSaveNet() {
     white: names.white,
     black: names.black,
     title: `Online game ${remote.id}${s.clock ? ` · ${tcLabel(s.clock)}` : ''}`,
-    assisted: false,
+    assisted: state.assisted,
   };
   store.save(rec).catch((err) => {
     remote.saved = false;
@@ -1241,6 +1281,7 @@ function remoteStatus() {
 function applyServer(s) {
   const prev = remote.server;
   remote.server = s;
+  if (!prev) state.evalBar = s.eval_bar === true; // the host's rule: on for everyone, each can hide it (E)
   if (s.server_now) remote.skew = s.server_now - Date.now();
   let sideSet = false;
   if (s.you && !remote.side) {
@@ -1261,7 +1302,6 @@ function applyServer(s) {
     // Nothing moved: don't re-render the board (would cut a running move animation).
     board.setMovable(movableColor());
     $('#resign').prop('disabled', !remote.side || isOver());
-    $('#analysis-btn').prop('disabled', netPlaying());
     if (prev?.status !== s.status) refreshAnalysis();
     renderCaptured(piecesMap()); // player names may have changed
     renderNet();
