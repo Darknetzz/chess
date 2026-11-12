@@ -2,6 +2,7 @@
 const ICONS = {
   'arrow-up-down': '<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>',
   'bot': '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
+  'check': '<path d="M20 6 9 17l-5-5"/>',
   'chevron-first': '<path d="m17 18-6-6 6-6"/><path d="M7 6v12"/>',
   'chevron-last': '<path d="m7 18 6-6-6-6"/><path d="M17 6v12"/>',
   'chevron-left': '<path d="m15 18-6-6 6-6"/>',

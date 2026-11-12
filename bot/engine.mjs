@@ -47,7 +47,7 @@ class Proc {
 
 /**
  * Pool of at most `maxProcs` engines with a FIFO queue.
- * bestMove(fen, level) resolves with a UCI move or null (no legal move).
+ * bestMove(fen, level, capMs?) resolves with a UCI move or null (no legal move); capMs caps the search time.
  */
 export function enginePool({ maxProcs = 2, maxDepth = 12, maxMs = 2000 } = {}) {
   const idle = [];
@@ -63,11 +63,11 @@ export function enginePool({ maxProcs = 2, maxDepth = 12, maxMs = 2000 } = {}) {
     return p;
   }
 
-  async function search(fen, level) {
+  async function search(fen, level, capMs) {
     const lvl = Math.max(0, Math.min(20, level | 0));
     // Same strength curve as the browser bot (js/engine.js), clamped by the server caps.
     const depth = Math.min(lvl + 1, maxDepth);
-    const ms = Math.min(50 + lvl * 50, maxMs);
+    const ms = Math.max(20, Math.min(50 + lvl * 50, maxMs, capMs ?? Infinity));
     let p = idle.pop();
     if (!p || p.dead) p = await fresh();
     try {
@@ -86,7 +86,7 @@ export function enginePool({ maxProcs = 2, maxDepth = 12, maxMs = 2000 } = {}) {
     while (running < maxProcs && queue.length) {
       const job = queue.shift();
       running++;
-      search(job.fen, job.level)
+      search(job.fen, job.level, job.capMs)
         .then(job.resolve, job.reject)
         .finally(() => {
           running--;
@@ -96,9 +96,9 @@ export function enginePool({ maxProcs = 2, maxDepth = 12, maxMs = 2000 } = {}) {
   }
 
   return {
-    bestMove: (fen, level) =>
+    bestMove: (fen, level, capMs) =>
       new Promise((resolve, reject) => {
-        queue.push({ fen, level, resolve, reject });
+        queue.push({ fen, level, capMs, resolve, reject });
         pump();
       }),
     close: () => idle.splice(0).forEach((p) => p.kill()),

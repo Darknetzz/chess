@@ -11,16 +11,18 @@ Browser chess against a friend (invite link), Stockfish or your own bot, all ref
 - Bot API: Node 26 with built-ins only (`node:http`, `node:sqlite`), `bot/server.mjs`. It is the referee for games between external bots and/or humans.
 
 ## Features
-- **New game** (`N`): pick your side (white/black/random), the time per move, and the opponent:
+- **New game** (`N`): pick your side (white/black/random), the time control and the opponent. Time control is a chess clock (presets from 1+0 bullet to 30+20 classical, or custom minutes + increment; clocks start once both sides have made a first move) or a fixed time per move:
   - **Human**: you get an invite link that opens the game as the other side
   - **Stockfish** (level 0–20): runs in your browser and plays its moves through the API like any bot
   - **External bot**: you get the bot's token and a ready-made command
   - **Analysis board**: local free play for both sides, with undo/redo and FEN/PGN load (no server, no clock)
-- Online games: the board follows your side, shows whose turn it is, the time left for the move, a live connected dot per player, and resign. Illegal or out-of-turn moves are rejected by the server and the piece snaps back. Tokens stay in this browser, so a reload or reconnect resumes the game. A spectator link without a token is read-only and live. Engine analysis is disabled while you play.
+- Online games: the board follows your side, shows whose turn it is, the time left for the move (or both chess clocks), a live connected dot per player, and resign. Illegal or out-of-turn moves are rejected by the server and the piece snaps back. Tokens stay in this browser, so a reload or reconnect resumes the game. A spectator link without a token is read-only and live. Engine analysis is disabled while you play.
 - Legal-move hints, drag or click to move, promotion picker, check/last-move highlight, sounds, move animation
 - Move list (click to jump), undo/redo (`←`/`→`), `Home`/`End`, flip (`F`), analysis (`A`), coordinates off/edges/every tile (`C`)
 - **Stockfish analysis** (`A`, or Settings): live best-move arrow, eval bar and depth for the shown position, on a separate full-strength worker; live games played with it on are marked *assisted* (badge in My games, `Annotator` header in PGN)
 - **Settings** (`S`): board themes + custom colours, highlight colour, 7 piece sets, board size, light/dark UI, animation speed, sounds/volume, toggles for hints/highlights/auto-queen/confirmations
+- **Premoves**: in online games, queue one or more moves during the opponent's turn; each is played the moment it's your turn if it's legal (otherwise the queue is dropped). Right-click the board or press `Esc` to clear.
+- **Confirm moves** (Settings, off by default): in online games a move is shown on the board and only sent after *Confirm move* (`Enter`); *Cancel* (`Esc`) takes it back
 - **Accounts**: username + password registration/login; settings and games sync to the account
 - **My games** (`G`): finished online games are saved when they end. Analysis-board games autosave (to the account, or this browser for guests — guests can upload them after logging in); replay with autoplay, continue/resume from any move, delete
 - **Export/import**: per-game PGN, all games as multi-game PGN or JSON backup; import multi-game PGN or JSON (bad games are reported and skipped). FEN/PGN of the current game via the FEN/PGN buttons.
@@ -64,7 +66,7 @@ Refereed games for external bots, or a bot against a human. The server holds the
 
 | Endpoint | Body | Purpose |
 |---|---|---|
-| `POST /api/games` | `{move_time_ms?, white?, black?, engine?}` | Create a game. Returns `201` with the game state plus `white_token` and `black_token` |
+| `POST /api/games` | `{move_time_ms? \| clock?, white?, black?, engine?}` | Create a game. Returns `201` with the game state plus `white_token` and `black_token` |
 | `GET /api/games/{id}` | – | Game state |
 | `GET /api/games/{id}/wait?since=<ply>` | – | Long-poll: answers as soon as `ply > since`, the game ends or a player connects/disconnects. Otherwise it answers after 30 s with the unchanged state |
 | `POST /api/games/{id}/move` | `{token, move}` | Play a move in UCI form: `e2e4`, `e1g1` (castling), `e7e8q` (promotion) |
@@ -73,6 +75,8 @@ Refereed games for external bots, or a bot against a human. The server holds the
 **Tokens** are returned only once, on create. Give each player its own token: it is the only credential for that side. On the two `GET` endpoints, an optional `Authorization: Bearer <token>` header adds `"you": "white"|"black"` to the response and marks that side as connected.
 
 **Create options** (all optional):
+- `move_time_ms`: per-move time limit (see *Time control*)
+- `clock`: `{"initial_ms": 15000-10800000, "increment_ms": 0-180000}`, a chess clock instead of a per-move limit. Not together with `move_time_ms`
 - `white` / `black`: `{"name": "…"}`, a display name of up to 40 characters
 - `engine`: `{"side": "white"|"black", "level": 0-20}`. The server plays that side with Stockfish, and its token is not returned. This is meant for headless games such as bot vs Stockfish. Engine resources are capped: see `CHESS_BOT_ENGINE_*`. When a human plays Stockfish on the board, Stockfish runs in the browser instead and holds a normal token.
 
@@ -87,10 +91,10 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
 ```jsonc
 {
   "game_id": "R5NvvpsGKA",
-  "status": "ongoing",          // ongoing | checkmate | stalemate | draw | resigned | timeout
+  "status": "ongoing",          // ongoing | checkmate | stalemate | draw | resigned | timeout | aborted
   "result": "*",                // * | 1-0 | 0-1 | 1/2-1/2
   "winner": null,               // white | black | null
-  "reason": null,               // threefold | fifty_move | insufficient_material | white_resigned | black_timeout | …
+  "reason": null,               // threefold | fifty_move | insufficient_material | white_resigned | black_timeout | white_no_first_move | …
   "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
   "turn": "black",
   "ply": 1,
@@ -100,20 +104,26 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
     "white": { "name": "MyBot", "engine": null, "connected": true },
     "black": { "name": "Stockfish (level 5)", "engine": { "level": 5 }, "connected": true }
   },
-  "move_time_ms": 30000,
+  "move_time_ms": 30000,        // clock games: the limit for each side's first move
+  "clock": null,                // clock games: { "initial_ms": 300000, "increment_ms": 3000 }
+  "clocks": null,               // clock games: time left now, { "white": 297512, "black": 300000 }
+  "server_now": 1794420812000,  // server time of this response, to correct for client clock skew
   "created_at": 1794420808543,  // all times: Unix epoch milliseconds
   "last_move_at": 1794420810000,// null before the first move
   "deadline_at": 1794420840000  // when the side to move loses on time; null once the game is over
 }
 ```
 
-**Time limit:** every move must arrive within `move_time_ms`, which is 1 s to 24 h (default `BOT_MOVE_TIME_MS`). If it doesn't, the side to move loses with `status: "timeout"`. White's clock starts when the game is created, so start both bots promptly or pick a generous limit. If the server restarts and a deadline passed while it was down, that side gets a fresh clock instead of losing.
+**Time control:**
+- *Per move* (default): every move must arrive within `move_time_ms`, which is 1 s to 24 h (default `BOT_MOVE_TIME_MS`). If it doesn't, the side to move loses with `status: "timeout"`. White's clock starts when the game is created, so start both bots promptly or pick a generous limit.
+- *Chess clock* (`clock`): each side has `initial_ms` in total and gets `increment_ms` back after each of its moves. The clocks start once both sides have made their first move. Each first move must arrive within `move_time_ms` (the initial time, clamped to 30 s–10 min), or the game ends with `status: "aborted"`, result `*`. After that, the side whose clock runs out loses with `status: "timeout"`. `deadline_at` is when the clock of the side to move runs out.
+- If the server restarts and a deadline passed while it was down, that side gets its time back (a fresh per-move limit, or the clock time it had at its last move) instead of losing.
 
 **Errors** come back as `{"error": "<code>", "message": "<text>"}`:
 
 | HTTP | `error` | When |
 |---|---|---|
-| 400 | `invalid_json`, `invalid_move_format`, `missing_token`, `invalid_move_time`, `invalid_since` | Malformed request |
+| 400 | `invalid_json`, `invalid_move_format`, `missing_token`, `invalid_move_time`, `invalid_clock`, `invalid_since` | Malformed request |
 | 401 | `invalid_token` | Token matches neither side |
 | 404 | `not_found` | Unknown game or endpoint |
 | 405 | `method_not_allowed` | Wrong HTTP method |
@@ -143,7 +153,7 @@ The same game API as [MCP](https://modelcontextprotocol.io) tools, so AI agents 
 
 | Tool | Arguments | Does |
 |---|---|---|
-| `create_game` | `move_time_ms?`, `white_name?`, `black_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20) | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play |
+| `create_game` | `move_time_ms?` or `clock_initial_ms?` + `clock_increment_ms?`, `white_name?`, `black_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20) | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play |
 | `make_move` | `game_id`, `token`, `move` (UCI) | Play a move; an illegal move returns an error listing the legal moves |
 | `get_board` | `game_id`, `token?`, `wait_since_ply?` | ASCII board, FEN, moves, legal moves, status, time left. With `wait_since_ply` it long-polls (up to ~25 s) for the opponent's move |
 

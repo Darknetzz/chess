@@ -21,13 +21,15 @@ export class Board {
    * @param {object} opts
    *   getMoves(square) -> verbose legal moves from that square
    *   onMove(from, to, promotion, dragged) -> called when the user makes a legal move
+   *   onRightClick() -> right-click on the board (e.g. clear premoves)
    * render() state also takes: autoQueen (skip the promotion picker),
    *   animate ({ from, to, ms } slide the piece that just landed on `to`),
-   *   arrows ([{ from, to }] drawn over the board; also settable alone via setArrows)
+   *   arrows ([{ from, to }] drawn over the board; also settable alone via setArrows),
+   *   premoves ([{ from, to }] queued premove squares to highlight)
    */
   constructor($root, opts) {
     this.opts = opts;
-    this.state = { pieces: {}, orientation: 'w', coordMode: 'edge', lastMove: null, checkSquare: null, movable: null, autoQueen: false, arrows: [] };
+    this.state = { pieces: {}, orientation: 'w', coordMode: 'edge', lastMove: null, checkSquare: null, movable: null, autoQueen: false, arrows: [], premoves: [] };
     this.selected = null;
     this.targets = new Map(); // dest square -> [verbose moves]
     this.drag = null;
@@ -45,7 +47,8 @@ export class Board {
   render(partial = {}) {
     const { animate, ...rest } = partial;
     Object.assign(this.state, rest);
-    const { pieces, orientation, coordMode, lastMove, checkSquare } = this.state;
+    const { pieces, orientation, coordMode, lastMove, checkSquare, premoves } = this.state;
+    const pre = new Set((premoves || []).flatMap((m) => [m.from, m.to]));
     const ranks = orientation === 'w' ? [8, 7, 6, 5, 4, 3, 2, 1] : [1, 2, 3, 4, 5, 6, 7, 8];
     const files = orientation === 'w' ? [...FILES] : [...FILES].reverse();
 
@@ -57,6 +60,7 @@ export class Board {
         const cls = ['sq', light ? 'light' : 'dark'];
         if (lastMove && (lastMove.from === sq || lastMove.to === sq)) cls.push('last');
         if (checkSquare === sq) cls.push('check');
+        if (pre.has(sq)) cls.push('premove');
         let inner = '';
         if (coordMode === 'all') {
           inner += `<span class="coord coord-all">${sq}</span>`;
@@ -209,6 +213,13 @@ export class Board {
   }
 
   _bind() {
+    this.$root.on('contextmenu', (e) => {
+      if (!this.opts.onRightClick) return;
+      e.preventDefault();
+      this._deselect();
+      this.opts.onRightClick();
+    });
+
     this.$promo.on('click', (e) => {
       const $btn = $(e.target).closest('.promo-btn');
       this._closePromotion($btn.length ? $btn.data('p') : null);

@@ -15,7 +15,7 @@
 <body>
   <main class="layout">
     <section class="play">
-      <div class="captured" id="captured-top"></div>
+      <div class="player-row"><div class="captured" id="captured-top"></div><span class="clock" id="clock-top" hidden></span></div>
       <div class="board-row">
         <div class="eval-bar" id="eval-bar" hidden title="Stockfish evaluation">
           <div class="eval-fill"></div>
@@ -23,7 +23,11 @@
         </div>
         <div id="board"></div>
       </div>
-      <div class="captured" id="captured-bottom"></div>
+      <div class="player-row"><div class="captured" id="captured-bottom"></div><span class="clock" id="clock-bottom" hidden></span></div>
+      <div class="confirm-bar" id="confirm-bar" hidden>
+        <button type="button" id="confirm-move" title="Send the move (Enter)"><i data-icon="check"></i><span class="lbl">Confirm move</span></button>
+        <button type="button" id="cancel-move" title="Take the move back (Esc)"><i data-icon="x"></i><span class="lbl">Cancel</span></button>
+      </div>
     </section>
 
     <aside class="panel">
@@ -124,7 +128,31 @@
         <label class="ng-stockfish">Stockfish level <output id="ng-level-out">5</output>
           <input id="ng-level" type="range" min="0" max="20" step="1" value="5">
         </label>
-        <label class="ng-online">Time per move (running out loses)
+        <label class="ng-online">Time control
+          <select id="ng-tc">
+            <optgroup label="Chess clock (minutes + seconds per move)">
+              <option value="1+0">1 + 0 · Bullet</option>
+              <option value="2+1">2 + 1 · Bullet</option>
+              <option value="3+0">3 + 0 · Blitz</option>
+              <option value="3+2">3 + 2 · Blitz</option>
+              <option value="5+0">5 + 0 · Blitz</option>
+              <option value="5+3">5 + 3 · Blitz</option>
+              <option value="10+0">10 + 0 · Rapid</option>
+              <option value="10+5">10 + 5 · Rapid</option>
+              <option value="15+10">15 + 10 · Rapid</option>
+              <option value="30+0">30 + 0 · Classical</option>
+              <option value="30+20">30 + 20 · Classical</option>
+              <option value="custom">Custom…</option>
+            </optgroup>
+            <option value="move">Time per move</option>
+          </select>
+        </label>
+        <div class="ng-online ng-custom row2">
+          <label>Minutes per side <input id="ng-clock-min" type="number" min="0.25" max="180" step="0.25" required></label>
+          <label>Increment (s) <input id="ng-clock-inc" type="number" min="0" max="180" step="1" required></label>
+        </div>
+        <p class="ng-online ng-clock-note muted">Clocks start once both sides have made their first move; a side that doesn't make its first move in time aborts the game.</p>
+        <label class="ng-online ng-move">Time per move (running out loses)
           <select id="ng-time">
             <option value="30000">30 seconds</option>
             <option value="120000" selected>2 minutes</option>
@@ -235,6 +263,8 @@
         <label class="check"><input type="checkbox" name="showCheck"> Highlight check</label>
         <label class="check"><input type="checkbox" name="autoQueen"> Always promote to queen</label>
         <label class="check"><input type="checkbox" name="confirmActions"> Confirm new game / resign</label>
+        <label class="check"><input type="checkbox" name="confirmMove"> Confirm moves in online games</label>
+        <label class="check"><input type="checkbox" name="premoves"> Premoves: queue moves during the opponent's turn (right-click / Esc clears)</label>
         <label class="check"><input type="checkbox" name="analysis"> Stockfish analysis (best move + evaluation; marks live games as assisted)</label>
         <label>Appearance
           <select name="uiTheme">

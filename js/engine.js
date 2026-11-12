@@ -54,7 +54,8 @@ export class Engine {
   }
 
   // Resolves with a UCI move string ("e2e4", "e7e8q") or null if cancelled / no move.
-  async bestMove(fen, level) {
+  // capMs (optional) caps the search time, e.g. to stay inside a running clock.
+  async bestMove(fen, level, capMs) {
     await this.init();
     this.cancel();
     const lvl = Math.max(0, Math.min(20, level | 0));
@@ -62,7 +63,8 @@ export class Engine {
       this.pending = { resolve };
       this.send(`setoption name Skill Level value ${lvl}`);
       this.send(`position fen ${fen}`);
-      this.send(`go depth ${lvl + 1} movetime ${50 + lvl * 50}`);
+      const ms = Math.max(20, Math.min(50 + lvl * 50, capMs ?? Infinity));
+      this.send(`go depth ${lvl + 1} movetime ${ms}`);
       this.searching = true;
     });
   }

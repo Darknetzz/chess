@@ -16,7 +16,7 @@ const CACHE = { ttlMs: 3_600_000, cacheScope: 'public' };
 const INSTRUCTIONS = `Chess games refereed by a server. create_game returns a game_id and one secret token per side you control.
 Loop: get_board with your token tells you your side ("you"). If it is your turn, make_move (UCI, e.g. e2e4, e7e8q).
 Otherwise call get_board with wait_since_ply = the current ply; it returns when the opponent moves (or after ~25 s unchanged).
-Every move must arrive within move_time_ms or that side loses on time. Stop when status is no longer "ongoing".`;
+Time: per-move games give every move move_time_ms. Clock games ("clock" set) give each side initial_ms plus increment_ms per move; clocks start once both sides have made a first move (each within move_time_ms, else the game is aborted). Running out loses on time. Stop when status is no longer "ongoing".`;
 
 export class RpcError extends Error {
   constructor(code, message, data) {
@@ -35,11 +35,14 @@ export const TOOLS = [
     title: 'Create chess game',
     description:
       'Create a game from the standard position. Returns game_id and a secret token for every side not played by the server engine. ' +
-      "Keep tokens private: a token is the only credential for its side. White's clock starts immediately.",
+      "Keep tokens private: a token is the only credential for its side. Time control: move_time_ms per move (white's clock starts immediately), " +
+      'or a chess clock with clock_initial_ms (+ clock_increment_ms), which starts once both sides have moved.',
     inputSchema: {
       type: 'object',
       properties: {
         move_time_ms: int('Time limit per move in ms (1000 to 86400000). Default: server setting, usually 30000', 1000, 86_400_000),
+        clock_initial_ms: int('Chess clock: time per side in ms (15000 to 10800000). Not with move_time_ms', 15_000, 10_800_000),
+        clock_increment_ms: int('Chess clock: time added after each move in ms (0 to 180000), only with clock_initial_ms', 0, 180_000),
         white_name: str('Display name for white (max 40 chars)', { maxLength: 40 }),
         black_name: str('Display name for black (max 40 chars)', { maxLength: 40 }),
         engine_side: str('Let the server play this side with Stockfish', { enum: ['white', 'black'] }),
@@ -105,7 +108,8 @@ export function describe(s, link) {
   if (s.status === 'ongoing') {
     const left = s.deadline_at ? Math.max(0, Math.round((s.deadline_at - Date.now()) / 1000)) : null;
     const yours = s.you ? (s.you === s.turn ? ' (YOUR MOVE)' : ' (opponent to move)') : '';
-    lines.push(`Game ${s.game_id}: ply ${s.ply}, ${s.turn} to move${yours}${who}${s.in_check ? ', in check' : ''}${left !== null ? `, ${left}s left for this move` : ''}.`);
+    const time = left === null ? '' : s.clock && s.ply >= 2 ? `, ${left}s on ${s.turn}'s clock` : `, ${left}s left for this move`;
+    lines.push(`Game ${s.game_id}: ply ${s.ply}, ${s.turn} to move${yours}${who}${s.in_check ? ', in check' : ''}${time}.`);
   } else {
     lines.push(`Game ${s.game_id} is over: ${s.status} ${s.result}${s.reason ? ` (${s.reason})` : ''}${s.winner ? `, ${s.winner} wins` : ''}${who}.`);
   }
@@ -114,7 +118,11 @@ export function describe(s, link) {
   if (s.status === 'ongoing') lines.push(`Legal moves (UCI): ${chess.moves({ verbose: true }).map((m) => m.lan).join(' ')}`);
   const p = s.players || {};
   const name = (c) => `${p[c]?.name || c}${p[c]?.connected ? '' : ' (not connected)'}`;
-  lines.push(`Players: white ${name('white')}, black ${name('black')}. Move time ${s.move_time_ms} ms. Watch: ${link(s.game_id)}`);
+  const sec = (ms) => Math.round(ms / 100) / 10;
+  const time = s.clock
+    ? `Clock ${sec(s.clock.initial_ms)}s + ${sec(s.clock.increment_ms)}s/move; left: white ${sec(s.clocks.white)}s, black ${sec(s.clocks.black)}s${s.ply < 2 ? ` (clocks start after both first moves, each within ${sec(s.move_time_ms)}s)` : ''}`
+    : `Move time ${s.move_time_ms} ms`;
+  lines.push(`Players: white ${name('white')}, black ${name('black')}. ${time}. Watch: ${link(s.game_id)}`);
   return lines.join('\n');
 }
 
@@ -124,6 +132,9 @@ async function callTool(backend, name, a = {}, link) {
     case 'create_game': {
       const opts = {};
       if (optInt(a.move_time_ms, 'move_time_ms') !== undefined) opts.move_time_ms = a.move_time_ms;
+      if (optInt(a.clock_initial_ms, 'clock_initial_ms') !== undefined) {
+        opts.clock = { initial_ms: a.clock_initial_ms, increment_ms: optInt(a.clock_increment_ms, 'clock_increment_ms') ?? 0 };
+      } else if (a.clock_increment_ms !== undefined) fail('"clock_increment_ms" needs "clock_initial_ms"');
       if (optStr(a.white_name, 'white_name')) opts.white = { name: a.white_name };
       if (optStr(a.black_name, 'black_name')) opts.black = { name: a.black_name };
       if (optStr(a.engine_side, 'engine_side')) opts.engine = { side: a.engine_side, level: optInt(a.engine_level, 'engine_level') ?? 5 };

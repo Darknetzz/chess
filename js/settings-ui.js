@@ -1,10 +1,9 @@
 // Settings dialog: renders the form from the current settings and reports changes.
 /* global $ */
-import { BOARD_THEMES, PIECE_SETS, DEFAULTS, boardColors } from './settings.js';
+import { BOARD_THEMES, PIECE_SETS, DEFAULTS, GAME_KEYS, boardColors } from './settings.js';
 import { pieceUrl } from './board.js';
 import { enhanceSelect } from './preview-select.js';
 
-const GAME_KEYS = ['mode', 'side', 'level', 'orientation'];
 
 /**
  * @param {object} opts

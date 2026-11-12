@@ -12,6 +12,7 @@ import { initAccount } from './account.js';
 import { initLibrary } from './library.js';
 import { hydrateIcons, setButton } from './icons.js';
 import { remoteFromUrl, botApi, netStore, gameLink } from './botgame.js';
+import { premoveDests, applyPremoves } from './premove.js';
 
 hydrateIcons();
 
@@ -50,6 +51,8 @@ let engineError = null;
 let saveError = null;
 let pendingAnim = null;
 let autoplayTimer = null;
+let premoves = []; // online games: moves queued during the opponent's turn [{ from, to, promotion }]
+let pendingMove = null; // online games with "confirm moves": played on the board, not sent yet { from, to, promotion, san }
 // Server-refereed bot API game (?game=<id>[#token=<t>]). Every live game except the local analysis board is one.
 // { id, token, engineToken, engineLevel, invite, botToken, saved, side, server, busy, engineBusy, error }
 const remote = remoteFromUrl();
@@ -221,17 +224,71 @@ function startNewIdentity(id = null, createdAt = null) {
 
 // ---- Board -----------------------------------------------------------------
 const board = new Board($('#board'), {
-  getMoves: (square) => game.moves({ square, verbose: true }),
+  getMoves: (square) => (premoveMode() ? premoveDests(displayPieces(), square) : game.moves({ square, verbose: true })),
   onMove: (from, to, promotion, dragged) => {
+    if (remote && premoveMode()) return addPremove({ from, to, promotion });
     if (remote) return remoteMove({ from, to, promotion }, !dragged);
     if (playMove({ from, to, promotion }, !dragged)) maybeBotMove();
   },
+  onRightClick: () => clearPremoves(),
 });
 
-function piecesMap() {
+function piecesMap(g = game) {
   const map = {};
-  for (const row of game.board()) for (const p of row) if (p) map[p.square] = { type: p.type, color: p.color };
+  for (const row of g.board()) for (const p of row) if (p) map[p.square] = { type: p.type, color: p.color };
   return map;
+}
+
+/** What the board shows: the position plus a move awaiting confirmation plus queued premoves. */
+function displayPieces() {
+  let pieces = piecesMap();
+  if (pendingMove) {
+    const g = new Chess(game.fen());
+    g.move(pendingMove);
+    pieces = piecesMap(g);
+  }
+  return premoves.length ? applyPremoves(pieces, premoves) : pieces;
+}
+
+// ---- Premoves & move confirmation (online games) ---------------------------------
+/** Playing an online game that is going on, at the latest position, with premoves enabled. */
+const canPremove = () => !!remote?.side && state.settings.premoves && remote.server?.status === 'ongoing' && atEnd();
+/** The board takes premoves now: it's the opponent's turn or our move is still on its way to the server. */
+const premoveMode = () => canPremove() && !pendingMove && (remote.busy || game.turn() !== remote.side);
+
+function addPremove(m) {
+  premoves.push(m);
+  update();
+}
+
+function clearPremoves() {
+  if (!premoves.length) return;
+  premoves = [];
+  update();
+}
+
+/** Play the first queued premove if it's our turn; drop the whole queue if it isn't legal (or can't be played). */
+function runPremove() {
+  if (!premoves.length) return;
+  if (!canPremove()) return clearPremoves();
+  if (remote.busy || pendingMove || game.turn() !== remote.side) return;
+  const m = premoves.shift();
+  const legal = game.moves({ verbose: true }).some((x) => x.from === m.from && x.to === m.to && (x.promotion || null) === (m.promotion || null));
+  if (!legal) return clearPremoves();
+  remoteMove(m, true, true);
+}
+
+function confirmPending() {
+  if (!pendingMove) return;
+  const m = pendingMove;
+  pendingMove = null;
+  remoteMove(m, false, true);
+}
+
+function cancelPending() {
+  if (!pendingMove) return;
+  pendingMove = null;
+  update();
 }
 
 function kingSquare(color) {
@@ -240,7 +297,10 @@ function kingSquare(color) {
 }
 
 function movableColor() {
-  if (remote) return remote.side && !remote.busy && !isOver() && atEnd() && game.turn() === remote.side ? remote.side : null;
+  if (remote) {
+    if (premoveMode()) return remote.side;
+    return remote.side && !remote.busy && !pendingMove && !isOver() && atEnd() && game.turn() === remote.side ? remote.side : null;
+  }
   if (state.replay || isOver()) return null;
   if (!isBot()) return 'both';
   if (thinking) return null;
@@ -317,6 +377,8 @@ function maybeBotMove() {
 
 function goTo(ply) {
   cancelBot();
+  premoves = [];
+  pendingMove = null;
   const target = Math.max(0, Math.min(state.history.length, ply));
   if (target === state.ply + 1) {
     pendingAnim = animFor(state.history[state.ply]);
@@ -496,7 +558,9 @@ function statusText() {
 }
 
 function renderStatus() {
-  $('#status').text(statusText()).toggleClass('over', isOver() && !state.replay).toggleClass('thinking', thinking);
+  const text = statusText();
+  if ($('#status').text() !== text) $('#status').text(text); // unchanged text: don't re-announce (aria-live)
+  $('#status').toggleClass('over', isOver() && !state.replay).toggleClass('thinking', thinking);
 }
 
 function renderMoves() {
@@ -559,10 +623,11 @@ function update() {
   const s = state.settings;
   const pieces = piecesMap();
   board.render({
-    pieces,
+    pieces: remote ? displayPieces() : pieces,
+    premoves,
     orientation: s.orientation,
     coordMode: s.coordMode,
-    lastMove: s.showLastMove && state.ply > 0 ? state.history[state.ply - 1] : null,
+    lastMove: !s.showLastMove ? null : pendingMove || (state.ply > 0 ? state.history[state.ply - 1] : null),
     checkSquare: s.showCheck && game.inCheck() ? kingSquare(game.turn()) : null,
     movable: movableColor(),
     autoQueen: s.autoQueen,
@@ -587,6 +652,7 @@ function update() {
   $('#resign').prop('disabled', remote ? !remote.side || isOver() : !inProgress());
   $('#analysis-btn').prop('disabled', netPlaying());
   $('#modal-load').prop('hidden', !!remote);
+  $('#confirm-bar').prop('hidden', !pendingMove);
   renderNet();
   setButton($('#coords'), null, COORD_LABELS[s.coordMode]);
   $('#undo, #first').prop('disabled', state.ply === 0);
@@ -689,6 +755,8 @@ function saveSettings() {
   }, 500);
 }
 
+const gameBits = () => Object.fromEntries(Settings.GAME_KEYS.map((k) => [k, state.settings[k]]));
+
 function applySettings() {
   Settings.apply(state.settings);
   setPieceSet(state.settings.pieceSet);
@@ -711,8 +779,7 @@ const account = initAccount({
     const server = Settings.sanitize(user.settings);
     if (user.settings && Object.keys(user.settings).length) {
       // Keep the game-mode bits of the session in progress.
-      const { mode, side, level, orientation } = state.settings;
-      state.settings = { ...server, mode, side, level, orientation };
+      state.settings = { ...server, ...gameBits() };
     }
     applySettings();
     saveSettings();
@@ -820,6 +887,10 @@ function askNewGame() {
   $('#ng-side').val(state.settings.side);
   $('#ng-level').val(state.settings.level);
   $('#ng-level-out').text(state.settings.level);
+  $('#ng-tc').val(state.settings.timeControl);
+  $('#ng-clock-min').val(state.settings.clockMinutes);
+  $('#ng-clock-inc').val(state.settings.clockIncrement);
+  $('#ng-time').val(String(state.settings.moveTimeMs));
   syncNewGameForm();
   $('#newgame-modal')[0].showModal();
 }
@@ -828,6 +899,21 @@ function syncNewGameForm() {
   const opp = ngOpponent();
   $('#newgame-form .ng-online').prop('hidden', opp === 'analysis');
   $('#newgame-form .ng-stockfish').prop('hidden', opp !== 'stockfish');
+  const tc = String($('#ng-tc').val());
+  const online = opp !== 'analysis';
+  $('#newgame-form .ng-custom').prop('hidden', !online || tc !== 'custom');
+  $('#ng-clock-min, #ng-clock-inc').prop('disabled', !online || tc !== 'custom');
+  $('#newgame-form .ng-move').prop('hidden', !online || tc !== 'move');
+  $('#newgame-form .ng-clock-note').prop('hidden', !online || tc === 'move');
+}
+
+/** Time control chosen in the dialog as API create options ({clock} or {move_time_ms}). */
+function dialogTimeControl() {
+  const tc = String($('#ng-tc').val());
+  if (tc === 'move') return { patch: { timeControl: tc, moveTimeMs: Number($('#ng-time').val()) }, opts: { move_time_ms: Number($('#ng-time').val()) } };
+  const [min, inc] = tc === 'custom' ? [Number($('#ng-clock-min').val()), Number($('#ng-clock-inc').val())] : Settings.CLOCK_PRESETS[tc];
+  const patch = { timeControl: tc, ...(tc === 'custom' ? { clockMinutes: min, clockIncrement: inc } : {}) };
+  return { patch, opts: { clock: { initial_ms: Math.round(min * 60000), increment_ms: Math.round(inc * 1000) } } };
 }
 
 /** Start the chosen game: online ones are created on the server, then the page opens them by URL. */
@@ -835,7 +921,8 @@ async function startFromDialog() {
   const opp = ngOpponent();
   const sideSel = String($('#ng-side').val());
   const level = Number($('#ng-level').val());
-  changeSettings({ side: sideSel, level });
+  const tc = dialogTimeControl();
+  changeSettings({ side: sideSel, level, ...(opp === 'analysis' ? {} : tc.patch) });
   if (opp === 'analysis') {
     $('#newgame-modal')[0].close();
     if (remote) return location.assign(`${location.pathname}#analysis`);
@@ -850,7 +937,7 @@ async function startFromDialog() {
   $('#ng-error').text('Creating game…');
   try {
     const g = await botApi.create({
-      move_time_ms: Number($('#ng-time').val()),
+      ...tc.opts,
       [mine]: { name: api.user?.username || '' },
       [theirs]: { name: theirName },
     });
@@ -870,7 +957,7 @@ async function startFromDialog() {
   }
 }
 
-$('#ng-opponent').on('change', syncNewGameForm);
+$('#ng-opponent, #ng-tc').on('change', syncNewGameForm);
 function ngOpponent() {
   return $('#ng-opponent input:checked').val();
 }
@@ -891,6 +978,8 @@ $(document).on('click', '[data-copy]', async (e) => {
 });
 
 $('#new').on('click', askNewGame);
+$('#confirm-move').on('click', confirmPending);
+$('#cancel-move').on('click', cancelPending);
 $('#resign').on('click', resign);
 $('#flip').on('click', flip);
 $('#coords').on('click', cycleCoords);
@@ -939,6 +1028,9 @@ $(document).on('keydown', (e) => {
   else if (k === 's') settingsUi.open();
   else if (k === ' ' && state.replay) toggleAutoplay();
   else if (k === 'escape' && state.replay) exitReplay();
+  else if (k === 'escape' && pendingMove) cancelPending();
+  else if (k === 'escape' && premoves.length) clearPremoves();
+  else if (k === 'enter' && pendingMove) confirmPending();
   else if (e.key === 'ArrowLeft') undo();
   else if (e.key === 'ArrowRight') redo();
   else if (e.key === 'Home') goTo(0);
@@ -963,6 +1055,41 @@ function fmtLeft(ms) {
   return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
+/** Server time now, corrected for this browser's clock offset (measured on each server response). */
+const serverNow = () => Date.now() + (remote?.skew || 0);
+
+/** Clock display: 9.3 under 10 s, else m:ss or h:mm:ss. */
+function fmtClock(ms) {
+  ms = Math.max(0, ms);
+  if (ms < 10000) return `0:0${(Math.floor(ms / 100) / 10).toFixed(1)}`;
+  const sec = Math.floor(ms / 1000);
+  const [h, m, r] = [Math.floor(sec / 3600), Math.floor(sec / 60) % 60, sec % 60];
+  const pad = (n) => String(n).padStart(2, '0');
+  return h ? `${h}:${pad(m)}:${pad(r)}` : `${m}:${pad(r)}`;
+}
+
+/** Time left on side c's clock now (ms). */
+function clockLeft(s, c) {
+  const running = s.status === 'ongoing' && s.ply >= 2 && s.turn[0] === c;
+  return running ? Math.max(0, s.deadline_at - serverNow()) : s.clocks[c === 'w' ? 'white' : 'black'];
+}
+
+function renderClocks() {
+  const s = remote?.server;
+  const show = !!s?.clock;
+  $('#clock-top, #clock-bottom').prop('hidden', !show);
+  if (!show) return;
+  const top = state.settings.orientation === 'w' ? 'b' : 'w';
+  const lowAt = Math.min(20000, Math.max(10000, s.clock.initial_ms / 10));
+  for (const [pos, c] of [['top', top], ['bottom', opposite(top)]]) {
+    const ms = clockLeft(s, c);
+    const flagged = s.status === 'timeout' && s.reason === `${c === 'w' ? 'white' : 'black'}_timeout`;
+    const active = s.status === 'ongoing' && s.ply >= 2 && s.turn[0] === c;
+    $(`#clock-${pos}`).text(fmtClock(ms)).toggleClass('active', active).toggleClass('low', ms < lowAt && !flagged)
+      .toggleClass('flagged', flagged).attr('title', `${COLOR_NAME[c]}'s clock`);
+  }
+}
+
 /** Playing (not spectating) an online game that is still going: engine help is off. */
 function netPlaying() {
   return !!remote?.side && remote.server?.status === 'ongoing';
@@ -974,6 +1101,7 @@ const netEngineSide = () => (remote?.engineToken && remote.side ? opposite(remot
 /** Players with live presence, plus invite/bot/spectator links for the creator. */
 function renderNet() {
   $('#net-panel').prop('hidden', !remote);
+  renderClocks();
   if (!remote) return;
   const s = remote.server;
   const rows = ['white', 'black'].map((side) => {
@@ -1013,7 +1141,11 @@ async function netEngineTurn() {
   renderStatus();
   let retry = false;
   try {
-    const [uci] = await Promise.all([engine.bestMove(s.fen, remote.engineLevel ?? 5), sleep(BOT_PAUSE_MS)]);
+    // On a clock, think at most ~1/40 of the time left so Stockfish doesn't flag.
+    const left = s.clock ? (s.ply >= 2 ? clockLeft(s, s.turn[0]) : s.deadline_at - serverNow()) : null;
+    const cap = left === null ? undefined : Math.max(50, Math.floor(left / 40));
+    const pause = left === null ? BOT_PAUSE_MS : Math.min(BOT_PAUSE_MS, cap);
+    const [uci] = await Promise.all([engine.bestMove(s.fen, remote.engineLevel ?? 5, cap), sleep(pause)]);
     if (!uci || remote.server.ply !== s.ply) return;
     const next = await botApi.move(remote.id, remote.engineToken, uci);
     remote.engineBusy = false;
@@ -1031,7 +1163,7 @@ async function netEngineTurn() {
 /** Store a finished online game in My games once (players only). */
 function maybeSaveNet() {
   const s = remote?.server;
-  if (!s || s.status === 'ongoing' || !remote.side || remote.saved || !storeReady || !s.moves.length) return;
+  if (!s || s.status === 'ongoing' || s.status === 'aborted' || !remote.side || remote.saved || !storeReady || !s.moves.length) return;
   remote.saved = true;
   netStore.set(remote.id, { saved: true });
   const names = playerNames();
@@ -1047,7 +1179,7 @@ function maybeSaveNet() {
     botLevel: remote.engineLevel ?? s.players?.[s.players?.white?.engine ? 'white' : 'black']?.engine?.level ?? null,
     white: names.white,
     black: names.black,
-    title: `Online game ${remote.id}`,
+    title: `Online game ${remote.id}${s.clock ? ` · ${tcLabel(s.clock)}` : ''}`,
     assisted: false,
   };
   store.save(rec).catch((err) => {
@@ -1058,8 +1190,12 @@ function maybeSaveNet() {
   });
 }
 
+/** "5+3" style label of a clock (minutes + increment seconds). */
+const tcLabel = (c) => `${+(c.initial_ms / 60000).toFixed(2)}+${+(c.increment_ms / 1000).toFixed(1)}`;
+
 function remoteEndText(s) {
   const who = s.reason?.startsWith('black') ? 'Black' : 'White';
+  if (s.status === 'aborted') return `aborted, ${who} made no first move`;
   if (s.status === 'resigned') return `${who} resigned`;
   if (s.status === 'timeout') return `${who} ran out of time`;
   return REASON_TEXT[s.reason] || s.status;
@@ -1069,11 +1205,16 @@ function remoteStatus() {
   const s = remote.server;
   if (!s) return remote.error || `Loading game ${remote.id}…`;
   const role = remote.side ? `You are ${COLOR_NAME[remote.side]}` : 'Spectating';
+  if (pendingMove && s.status === 'ongoing') return `${role} · Confirm ${pendingMove.san}? (Enter / Esc)`;
   let t;
   if (s.status === 'ongoing') {
     const mine = remote.side && s.turn[0] === remote.side;
     const who = mine ? 'Your move' : remote.engineBusy ? 'Stockfish is thinking' : `${COLOR_NAME[s.turn[0]]} to move`;
-    t = `${who}${s.in_check ? ' — check!' : ''} · ${fmtLeft(s.deadline_at - Date.now())} left`;
+    const left = fmtLeft(s.deadline_at - serverNow());
+    const time = !s.clock ? ` · ${left} left` : s.ply < 2 ? ` · first move within ${left}` : '';
+    t = `${who}${s.in_check ? ' — check!' : ''}${time}`;
+  } else if (s.status === 'aborted') {
+    t = `Game ${remoteEndText(s)}`;
   } else {
     t = `${RESULT_TEXT[s.result] || s.result} — ${remoteEndText(s)}`;
   }
@@ -1087,11 +1228,16 @@ function remoteStatus() {
 function applyServer(s) {
   const prev = remote.server;
   remote.server = s;
+  if (s.server_now) remote.skew = s.server_now - Date.now();
   let sideSet = false;
   if (s.you && !remote.side) {
     remote.side = s.you[0];
     state.settings.orientation = remote.side;
     sideSet = true;
+  }
+  if (s.status !== 'ongoing') {
+    premoves = [];
+    pendingMove = null;
   }
   const local = state.history.map(toUci);
   const srv = s.moves.map((m) => m.uci);
@@ -1109,6 +1255,7 @@ function applyServer(s) {
   } else if (isPrefix && following && srv.length === local.length + 1) {
     playMove(fromUci(srv.at(-1)));
   } else {
+    pendingMove = null;
     const g = new Chess(DEFAULT_POSITION);
     state.startFen = DEFAULT_POSITION;
     state.history = srv.map((u) => {
@@ -1121,9 +1268,22 @@ function applyServer(s) {
   }
   netEngineTurn();
   maybeSaveNet();
+  runPremove();
 }
 
-async function remoteMove(move, animate) {
+async function remoteMove(move, animate, skipConfirm = false) {
+  if (state.settings.confirmMove && !skipConfirm) {
+    // Show the move on the board and wait for Confirm / Cancel; nothing is sent yet.
+    let res;
+    try {
+      res = new Chess(game.fen()).move(move);
+    } catch {
+      return update();
+    }
+    pendingMove = { from: res.from, to: res.to, promotion: res.promotion, san: res.san };
+    if (animate) pendingAnim = animFor(res);
+    return update();
+  }
   remote.busy = true; // locks the board until the server answers
   if (!playMove(move, animate)) {
     remote.busy = false;
@@ -1186,7 +1346,11 @@ async function remoteStart() {
     return update();
   }
   applyServer(s);
-  setInterval(() => remote.server?.status === 'ongoing' && renderStatus(), 1000);
+  setInterval(() => {
+    if (remote.server?.status !== 'ongoing') return;
+    renderStatus();
+    renderClocks();
+  }, remote.server?.clock ? 100 : 1000);
   let backoff = 1000;
   let engineSeen = 0;
   while (remote.server.status === 'ongoing') {
@@ -1233,8 +1397,7 @@ api.init().then((user) => {
   // A stored id only makes sense in the store it came from.
   if (state.gameId !== null && (typeof state.gameId === 'number') !== !!user) state.gameId = null;
   if (user && user.settings && Object.keys(user.settings).length) {
-    const { mode, side, level, orientation } = state.settings;
-    state.settings = { ...Settings.sanitize(user.settings), mode, side, level, orientation };
+    state.settings = { ...Settings.sanitize(user.settings), ...gameBits() };
     applySettings();
     Settings.saveLocal(state.settings);
   }

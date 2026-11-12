@@ -24,12 +24,23 @@ export const PIECE_SETS = {
 
 export const ANIMATION_MS = { off: 0, fast: 120, normal: 220, slow: 380 };
 
+/** Chess clock presets: key -> [minutes, increment seconds]. */
+export const CLOCK_PRESETS = {
+  '1+0': [1, 0], '2+1': [2, 1], '3+0': [3, 0], '3+2': [3, 2], '5+0': [5, 0], '5+3': [5, 3],
+  '10+0': [10, 0], '10+5': [10, 5], '15+10': [15, 10], '30+0': [30, 0], '30+20': [30, 20],
+};
+export const MOVE_TIMES = [30000, 120000, 600000, 86400000];
+
 export const DEFAULTS = {
   // game
   mode: 'free',
   side: 'w',
   level: 5,
   orientation: 'w',
+  timeControl: '5+3', // a CLOCK_PRESETS key, 'custom' (clockMinutes + clockIncrement) or 'move' (moveTimeMs per move)
+  clockMinutes: 5,
+  clockIncrement: 3,
+  moveTimeMs: 120000,
   // board look
   coordMode: 'edge',
   boardTheme: 'brown',
@@ -49,6 +60,8 @@ export const DEFAULTS = {
   showCheck: true,
   autoQueen: false,
   confirmActions: true,
+  confirmMove: false,
+  premoves: true,
   analysis: false,
   autoplaySpeed: 1.5,
 };
@@ -62,8 +75,13 @@ const ENUMS = {
   pieceSet: Object.keys(PIECE_SETS),
   uiTheme: ['system', 'light', 'dark'],
   animation: Object.keys(ANIMATION_MS),
+  timeControl: [...Object.keys(CLOCK_PRESETS), 'custom', 'move'],
+  moveTimeMs: MOVE_TIMES,
 };
-const RANGES = { level: [0, 20], boardSize: [320, 1200], volume: [0, 100], autoplaySpeed: [0.25, 5] };
+const RANGES = { level: [0, 20], boardSize: [320, 1200], volume: [0, 100], autoplaySpeed: [0.25, 5], clockMinutes: [0.25, 180], clockIncrement: [0, 180] };
+
+/** Game-mode keys: kept from the session in progress when account settings load. */
+export const GAME_KEYS = ['mode', 'side', 'level', 'orientation', 'timeControl', 'clockMinutes', 'clockIncrement', 'moveTimeMs'];
 const COLOR_RE = /^#[0-9a-f]{6}$/i;
 
 /** Keep only known keys with valid values; fill the rest from defaults. */

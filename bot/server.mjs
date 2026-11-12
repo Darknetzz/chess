@@ -15,6 +15,11 @@ const PORT = envInt('PORT', 3000);
 const DATA_DIR = process.env.DATA_DIR || fileURLToPath(new URL('../data', import.meta.url));
 const MIN_MOVE_MS = 1_000;
 const MAX_MOVE_MS = 86_400_000;
+const CLOCK_MIN_MS = 15_000;
+const CLOCK_MAX_MS = 10_800_000;
+const INCREMENT_MAX_MS = 180_000;
+const FIRST_MOVE_MIN_MS = 30_000; // clock games: limit for each side's first move (clocks start after both)
+const FIRST_MOVE_MAX_MS = 600_000;
 const DEFAULT_MOVE_MS = Math.min(MAX_MOVE_MS, Math.max(MIN_MOVE_MS, envInt('BOT_MOVE_TIME_MS', 30_000)));
 const CREATE_PER_HOUR = envInt('BOT_CREATE_PER_HOUR', 30);
 const PROXY_HOPS = Number.isInteger(+process.env.BOT_PROXY_HOPS) ? +process.env.BOT_PROXY_HOPS : 1;
@@ -65,13 +70,25 @@ if (db.prepare('PRAGMA user_version').get().user_version < 1) {
     COMMIT;
   `);
 }
+if (db.prepare('PRAGMA user_version').get().user_version < 2) {
+  // Chess clock: clock_ms/increment_ms NULL = per-move game; white_ms/black_ms = time left as of last_move_at.
+  db.exec(`
+    BEGIN;
+    ALTER TABLE games ADD COLUMN clock_ms INTEGER;
+    ALTER TABLE games ADD COLUMN increment_ms INTEGER;
+    ALTER TABLE games ADD COLUMN white_ms INTEGER;
+    ALTER TABLE games ADD COLUMN black_ms INTEGER;
+    PRAGMA user_version = 2;
+    COMMIT;
+  `);
+}
 const q = {
-  insert: db.prepare(`INSERT INTO games (id, created_at, white_hash, black_hash, move_time_ms, deadline_at, white_name, black_name, engine_side, engine_level)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+  insert: db.prepare(`INSERT INTO games (id, created_at, white_hash, black_hash, move_time_ms, deadline_at, white_name, black_name, engine_side, engine_level,
+    clock_ms, increment_ms, white_ms, black_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   get: db.prepare('SELECT * FROM games WHERE id = ?'),
   ongoing: db.prepare(`SELECT * FROM games WHERE status = 'ongoing'`),
-  save: db.prepare(`UPDATE games SET moves = ?, status = ?, result = ?, reason = ?, last_move_at = ?, deadline_at = ? WHERE id = ?`),
-  deadline: db.prepare('UPDATE games SET deadline_at = ? WHERE id = ?'),
+  save: db.prepare(`UPDATE games SET moves = ?, status = ?, result = ?, reason = ?, last_move_at = ?, deadline_at = ?, white_ms = ?, black_ms = ? WHERE id = ?`),
+  restart: db.prepare('UPDATE games SET deadline_at = ?, last_move_at = ? WHERE id = ?'),
 };
 
 const hash = (t) => createHash('sha256').update(t).digest('hex');
@@ -109,8 +126,10 @@ function engineTurn(g, attempt = 0) {
   if (r.status !== 'ongoing' || r.engine_side !== g.chess.turn() || g.thinking) return;
   g.thinking = true;
   const ply = g.chess.history().length;
+  // On a clock, think at most ~1/40 of the time left so the engine doesn't flag.
+  const left = isClock(r) ? (clockRunning(g) ? timeLeft(g, r.engine_side) : r.deadline_at - Date.now()) : null;
   engines
-    .bestMove(g.chess.fen(), r.engine_level)
+    .bestMove(g.chess.fen(), r.engine_level, left === null ? undefined : Math.max(50, Math.floor(left / 40)))
     .then((uci) => {
       g.thinking = false;
       if (r.status !== 'ongoing' || g.chess.history().length !== ply) return;
@@ -127,10 +146,12 @@ function engineTurn(g, attempt = 0) {
 
 function persist(g) {
   const r = g.row;
-  q.save.run(r.moves, r.status, r.result, r.reason, r.last_move_at, r.deadline_at, r.id);
+  q.save.run(r.moves, r.status, r.result, r.reason, r.last_move_at, r.deadline_at, r.white_ms, r.black_ms, r.id);
 }
 
 function finish(g, status, result, reason) {
+  const turn = g.chess.turn();
+  if (clockRunning(g)) g.row[`${SIDE[turn]}_ms`] = timeLeft(g, turn); // freeze the running clock
   Object.assign(g.row, { status, result, reason, deadline_at: null });
   clearTimeout(g.timer);
   live.delete(g.row.id);
@@ -148,6 +169,16 @@ function outcome(chess) {
 }
 
 // ---------- clocks ----------
+const isClock = (r) => r.clock_ms != null;
+/** Clock games: both clocks run only once each side has made its first move. */
+const clockRunning = (g) => isClock(g.row) && g.row.status === 'ongoing' && g.chess.history().length >= 2;
+/** Clock time left for side c right now (ms), or null for per-move games. */
+function timeLeft(g, c, now = Date.now()) {
+  const r = g.row;
+  if (!isClock(r)) return null;
+  const banked = r[`${SIDE[c]}_ms`];
+  return clockRunning(g) && c === g.chess.turn() ? Math.max(0, banked - (now - r.last_move_at)) : banked;
+}
 function schedule(g) {
   clearTimeout(g.timer);
   if (g.row.status !== 'ongoing') return;
@@ -158,7 +189,8 @@ function schedule(g) {
 function onDeadline(g) {
   if (g.row.status !== 'ongoing' || Date.now() < g.row.deadline_at) return schedule(g);
   const loser = g.chess.turn();
-  finish(g, 'timeout', loser === 'w' ? '0-1' : '1-0', `${SIDE[loser]}_timeout`);
+  if (isClock(g.row) && g.chess.history().length < 2) finish(g, 'aborted', '*', `${SIDE[loser]}_no_first_move`);
+  else finish(g, 'timeout', loser === 'w' ? '0-1' : '1-0', `${SIDE[loser]}_timeout`);
   persist(g);
   wake(g);
 }
@@ -207,6 +239,9 @@ function state(g) {
       ]),
     ),
     move_time_ms: r.move_time_ms,
+    clock: isClock(r) ? { initial_ms: r.clock_ms, increment_ms: r.increment_ms } : null,
+    clocks: isClock(r) ? { white: timeLeft(g, 'w'), black: timeLeft(g, 'b') } : null,
+    server_now: Date.now(),
     created_at: r.created_at,
     last_move_at: r.last_move_at,
     deadline_at: r.deadline_at,
@@ -294,7 +329,19 @@ function needOngoing(g) {
 }
 
 function create(body, req) {
-  let ms = body.move_time_ms ?? DEFAULT_MOVE_MS;
+  let clock = null;
+  if (body.clock != null) {
+    const c = body.clock;
+    const inc = c?.increment_ms ?? 0;
+    if (body.move_time_ms != null) throw err(400, 'invalid_clock', 'Give either "clock" or "move_time_ms", not both');
+    if (typeof c !== 'object' || !Number.isInteger(c.initial_ms) || c.initial_ms < CLOCK_MIN_MS || c.initial_ms > CLOCK_MAX_MS
+      || !Number.isInteger(inc) || inc < 0 || inc > INCREMENT_MAX_MS) {
+      throw err(400, 'invalid_clock', `"clock" must be {initial_ms: ${CLOCK_MIN_MS}-${CLOCK_MAX_MS}, increment_ms?: 0-${INCREMENT_MAX_MS}}`);
+    }
+    clock = { initial: c.initial_ms, inc };
+  }
+  // Clock games: move_time_ms is the limit for each side's first move.
+  let ms = clock ? Math.min(FIRST_MOVE_MAX_MS, Math.max(FIRST_MOVE_MIN_MS, clock.initial)) : (body.move_time_ms ?? DEFAULT_MOVE_MS);
   if (!Number.isInteger(ms) || ms < MIN_MOVE_MS || ms > MAX_MOVE_MS) {
     throw err(400, 'invalid_move_time', `move_time_ms must be an integer between ${MIN_MOVE_MS} and ${MAX_MOVE_MS}`);
   }
@@ -319,7 +366,8 @@ function create(body, req) {
   const now = Date.now();
   let id;
   do id = newId(); while (q.get.get(id));
-  q.insert.run(id, now, hash(tokens.white), hash(tokens.black), ms, now + ms, names.white, names.black, engine?.side ?? null, engine?.level ?? null);
+  q.insert.run(id, now, hash(tokens.white), hash(tokens.black), ms, now + ms, names.white, names.black, engine?.side ?? null, engine?.level ?? null,
+    clock?.initial ?? null, clock?.inc ?? null, clock?.initial ?? null, clock?.initial ?? null);
   const g = load(id);
   const out = { ...state(g) };
   // The server plays the engine side, so its token is never handed out.
@@ -346,12 +394,19 @@ function applyMove(g, uci) {
       legal_moves: legal,
     });
   }
-  g.chess.move(fromUci(uci));
   const now = Date.now();
   const r = g.row;
+  if (now >= r.deadline_at) {
+    // The flag fell before the timer fired: the move comes too late.
+    onDeadline(g);
+    throw err(409, 'game_over', `Game is over (${r.status}, ${r.result})`);
+  }
+  const mover = g.chess.turn();
+  if (clockRunning(g)) r[`${SIDE[mover]}_ms`] = timeLeft(g, mover, now) + r.increment_ms;
+  g.chess.move(fromUci(uci));
   r.moves = r.moves ? `${r.moves} ${uci}` : uci;
   r.last_move_at = now;
-  r.deadline_at = now + r.move_time_ms;
+  r.deadline_at = now + (clockRunning(g) ? r[`${SIDE[g.chess.turn()]}_ms`] : r.move_time_ms);
   const end = outcome(g.chess);
   if (end) finish(g, ...end);
   else schedule(g);
@@ -528,8 +583,12 @@ server.requestTimeout = WAIT_MS + 30_000;
 const now = Date.now();
 for (const row of q.ongoing.all()) {
   if (row.deadline_at < now) {
-    row.deadline_at = now + row.move_time_ms;
-    q.deadline.run(row.deadline_at, row.id);
+    // Clock games: the side to move keeps the time it had at its last move; first moves get a fresh limit.
+    const ply = row.moves ? row.moves.split(' ').length : 0;
+    const side = ply % 2 ? 'black' : 'white';
+    row.deadline_at = now + (row.clock_ms != null && ply >= 2 ? row[`${side}_ms`] : row.move_time_ms);
+    if (row.clock_ms != null && row.last_move_at !== null) row.last_move_at = now;
+    q.restart.run(row.deadline_at, row.last_move_at, row.id);
   }
   load(row.id);
 }
