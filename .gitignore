@@ -3,3 +3,4 @@ Thumbs.db
 .claude/
 data/*
 !data/.htaccess
+version.json

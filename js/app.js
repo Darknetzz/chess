@@ -1101,6 +1101,12 @@ $('#replay-exit').on('click', () => exitReplay());
 $('#games-btn').on('click', () => library.open());
 $('#settings-btn').on('click', () => settingsUi.open());
 
+// version.json is written by the Docker build; absent elsewhere, then the line stays hidden.
+fetch('version.json', { cache: 'no-store' })
+  .then((r) => (r.ok ? r.json() : null))
+  .then((v) => { if (v?.commit) $('#version').text(`Version ${v.commit} · ${v.date}`).prop('hidden', false); })
+  .catch(() => {});
+
 $('#fen-btn').on('click', () => openModal('fen'));
 $('#pgn-btn').on('click', () => openModal('pgn'));
 $('#modal-load').on('click', loadFromModal);
