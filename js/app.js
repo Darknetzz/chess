@@ -398,10 +398,17 @@ function goTo(ply) {
   update();
 }
 
-function undo() {
-  if (state.ply === 0) return;
+/** Ply that undo goes back to (vs the bot: the player's previous turn), or null if none. */
+function undoTarget() {
+  if (state.ply === 0) return null;
   let p = state.ply - 1;
   if (isBot()) while (p > 0 && turnAt(p) !== state.humanColor) p--;
+  return isBot() && turnAt(p) !== state.humanColor ? null : p;
+}
+
+function undo() {
+  const p = undoTarget();
+  if (p === null) return;
   if (!state.replay) state.resigned = null;
   goTo(p);
 }
@@ -712,7 +719,8 @@ function update() {
   $('#confirm-bar').prop('hidden', !pendingMove);
   renderNet();
   setButton($('#coords'), null, COORD_LABELS[s.coordMode]);
-  $('#undo, #first').prop('disabled', state.ply === 0);
+  $('#undo').prop('disabled', undoTarget() === null);
+  $('#first').prop('disabled', state.ply === 0);
   $('#redo, #last').prop('disabled', atEnd());
   refreshAnalysis();
   persist();
@@ -984,18 +992,23 @@ function askNewGame() {
   $('#ng-premoves').prop('checked', state.settings.premoves);
   $('#ng-evalbar').prop('checked', state.settings.evalBar);
   $('#ng-analysis').prop('checked', state.settings.allowAnalysis);
+  $('#ng-undo').prop('checked', state.settings.freeUndo);
   $('#ng-name').val(myName());
   syncNewGameForm();
   $('#newgame-modal')[0].showModal();
 }
 
+/** The dialog's choice is played locally in this browser (analysis board, or Stockfish with free undo). */
+const ngLocal = (opp = ngOpponent()) => opp === 'analysis' || (opp === 'stockfish' && $('#ng-undo').prop('checked'));
+
 function syncNewGameForm() {
   const opp = ngOpponent();
-  $('#newgame-form .ng-online').prop('hidden', opp === 'analysis');
-  $('#ng-evalbar-verb').text(opp === 'analysis' ? 'Show' : 'Allow the');
+  const online = !ngLocal(opp);
+  $('#newgame-form .ng-online').prop('hidden', !online);
+  $('#newgame-form .ng-side').prop('hidden', opp === 'analysis');
+  $('#ng-evalbar-verb').text(online ? 'Allow the' : 'Show');
   $('#newgame-form .ng-stockfish').prop('hidden', opp !== 'stockfish');
   const tc = String($('#ng-tc').val());
-  const online = opp !== 'analysis';
   $('#newgame-form .ng-custom').prop('hidden', !online || tc !== 'custom');
   $('#ng-clock-min, #ng-clock-inc').prop('disabled', !online || tc !== 'custom');
   $('#newgame-form .ng-move').prop('hidden', !online || tc !== 'move');
@@ -1021,16 +1034,18 @@ async function startFromDialog() {
   const evalBar = $('#ng-evalbar').prop('checked');
   const allowAnalysis = $('#ng-analysis').prop('checked');
   const name = String($('#ng-name').val()).trim();
+  const local = ngLocal(opp);
   changeSettings({
     side: sideSel, level, evalBar,
-    ...(opp === 'analysis' ? {} : { ...tc.patch, premoves: allowPremoves, playerName: name }),
-    ...(opp === 'analysis' ? {} : { allowAnalysis }),
+    ...(opp === 'stockfish' ? { freeUndo: local } : {}),
+    ...(local ? {} : { ...tc.patch, premoves: allowPremoves, playerName: name, allowAnalysis }),
   });
-  if (opp === 'analysis') {
+  if (local) {
     $('#newgame-modal')[0].close();
-    if (remote) return location.assign(`${location.pathname}#analysis`);
+    const hash = opp === 'analysis' ? 'analysis' : 'stockfish';
+    if (remote) return location.assign(`${location.pathname}#${hash}`);
     if (!confirmIf(inProgress(), 'Abandon the current game and start a new one? (It stays in My games.)')) return;
-    changeSettings({ mode: 'free' });
+    changeSettings({ mode: hash === 'analysis' ? 'free' : 'bot' });
     return newGame();
   }
   const me = sideSel === 'random' ? (Math.random() < 0.5 ? 'w' : 'b') : sideSel;
@@ -1065,7 +1080,7 @@ async function startFromDialog() {
   }
 }
 
-$('#ng-opponent, #ng-tc').on('change', syncNewGameForm);
+$('#ng-opponent, #ng-tc, #ng-undo').on('change', syncNewGameForm);
 function ngOpponent() {
   return $('#ng-opponent input:checked').val();
 }
@@ -1741,9 +1756,10 @@ api.init().then((user) => {
   if (!remote) hideLoader(); // account settings (board theme etc.) applied first
 });
 if (remote) remoteStart(); // hides the loader once the game is fetched
-else if (location.hash === '#analysis') {
-  // "Analysis board" chosen while in an online game: fresh local board.
+else if (location.hash === '#analysis' || location.hash === '#stockfish') {
+  // A local game (analysis board / Stockfish with free undo) chosen while in an online game: fresh local board.
+  const mode = location.hash === '#analysis' ? 'free' : 'bot';
   history.replaceState(null, '', location.pathname);
-  changeSettings({ mode: 'free' });
+  changeSettings({ mode });
   newGame();
 }

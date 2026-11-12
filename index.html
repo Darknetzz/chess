@@ -144,7 +144,7 @@
         <label class="ng-online"><span class="ttl"><i data-icon="user-pen"></i>Your name</span>
           <input id="ng-name" maxlength="40" autocomplete="nickname" placeholder="Shown next to your colour">
         </label>
-        <label class="ng-online"><span class="ttl"><i data-icon="chess-king"></i>You play</span>
+        <label class="ng-side"><span class="ttl"><i data-icon="chess-king"></i>You play</span>
           <select id="ng-side">
             <option value="w">White</option>
             <option value="b">Black</option>
@@ -154,6 +154,7 @@
         <label class="ng-stockfish"><span class="ttl"><i data-icon="gauge"></i>Stockfish level <output id="ng-level-out">5</output></span>
           <input id="ng-level" type="range" min="0" max="20" step="1" value="5">
         </label>
+        <label class="ng-stockfish check"><input type="checkbox" id="ng-undo"> Free undo/redo (local game: no clock, take back and replay moves with <kbd>←</kbd>/<kbd>→</kbd>)</label>
         <label class="ng-online"><span class="ttl"><i data-icon="timer"></i>Time control</span>
           <select id="ng-tc">
             <optgroup label="Chess clock (minutes + seconds per move)">
