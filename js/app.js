@@ -515,8 +515,14 @@ function renderMoves() {
     m ? `<button type="button" class="mv${m.ply === state.ply ? ' cur' : ''}" data-ply="${m.ply}">${m.san}</button>` : '<span class="mv empty">…</span>';
   $('#moves').html(rows.map((r) => `<li><span class="num">${r.num}.</span>${cell(r.w)}${cell(r.b)}</li>`).join(''));
   const cur = $('#moves .cur')[0];
-  if (cur) cur.scrollIntoView({ block: 'nearest' });
-  else $('#moves').scrollTop(0);
+  // Scroll only the list itself: scrollIntoView would also scroll the page when the panel is below the board.
+  const list = $('#moves')[0];
+  if (!cur) list.scrollTop = 0;
+  else {
+    const top = cur.getBoundingClientRect().top - list.getBoundingClientRect().top - list.clientTop + list.scrollTop;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (top + cur.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = top + cur.offsetHeight - list.clientHeight;
+  }
 }
 
 function renderCaptured(pieces) {

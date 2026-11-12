@@ -15,7 +15,8 @@
   --hint: rgba(20, 85, 30, 0.45);
   --check: radial-gradient(circle, rgba(255, 0, 0, 0.9) 0%, rgba(231, 0, 0, 0.5) 30%, rgba(169, 0, 0, 0) 75%);
   --board-max: 720px;
-  --board-size: min(92vw, calc(100vh - 120px), var(--board-max));
+  /* Leave room for the 300px panel + gap + padding beside the board; below 700px they stack. */
+  --board-size: min(calc(100vw - 360px), calc(100vh - 120px), var(--board-max));
   color-scheme: light;
 }
 
