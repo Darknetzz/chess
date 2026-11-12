@@ -238,6 +238,7 @@ label.inline select { width: auto; }
   font-weight: 600;
 }
 .status.over { background: var(--accent); color: #fff; }
+.status.over.lost { background: #b33a3a; }
 .status.thinking { color: var(--muted); }
 
 .group { display: flex; flex-direction: column; gap: 8px; }

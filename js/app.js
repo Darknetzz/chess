@@ -564,7 +564,10 @@ function statusText() {
 function renderStatus() {
   const text = statusText();
   if ($('#status').text() !== text) $('#status').text(text); // unchanged text: don't re-announce (aria-live)
-  $('#status').toggleClass('over', isOver() && !state.replay).toggleClass('thinking', thinking);
+  const over = isOver() && !state.replay;
+  const r = remote?.server?.result;
+  const lost = over && !!remote?.side && (r === '1-0' || r === '0-1') && r !== (remote.side === 'w' ? '1-0' : '0-1');
+  $('#status').toggleClass('over', over).toggleClass('lost', lost).toggleClass('thinking', thinking);
 }
 
 function renderMoves() {
