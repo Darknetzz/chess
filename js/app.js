@@ -725,8 +725,8 @@ let lastEval = { info: null, result: null, fen: null };
 
 /** The eval bar may be shown: always, except while playing an online game whose host didn't allow it. */
 const evalAllowed = () => analysisAllowed() || remote.server?.eval_bar === true;
-/** Full analysis may be used: always, except while playing an online game (unless it's vs Stockfish with analysis allowed). */
-const analysisAllowed = () => !netPlaying() || remote.analysis === true;
+/** Full analysis may be used: always, except while playing an online game whose rules don't allow it. */
+const analysisAllowed = () => !netPlaying() || remote.analysis === true || remote.server?.analysis === true;
 /** Full analysis (best-move arrow + line) is on. */
 const fullAnalysis = () => state.settings.analysis && analysisAllowed();
 
@@ -1024,7 +1024,7 @@ async function startFromDialog() {
   changeSettings({
     side: sideSel, level, evalBar,
     ...(opp === 'analysis' ? {} : { ...tc.patch, premoves: allowPremoves, playerName: name }),
-    ...(opp === 'stockfish' ? { allowAnalysis } : {}),
+    ...(opp === 'analysis' ? {} : { allowAnalysis }),
   });
   if (opp === 'analysis') {
     $('#newgame-modal')[0].close();
@@ -1044,6 +1044,7 @@ async function startFromDialog() {
       ...tc.opts,
       premoves: allowPremoves,
       eval_bar: evalBar,
+      analysis: allowAnalysis,
       [mine]: { name: myName() },
       [theirs]: { name: theirName },
     });
@@ -1052,7 +1053,7 @@ async function startFromDialog() {
       token: g[`${mine}_token`],
       engineToken: opp === 'stockfish' ? other : null,
       engineLevel: opp === 'stockfish' ? level : null,
-      analysis: opp === 'stockfish' && allowAnalysis,
+      analysis: allowAnalysis,
       invite: opp === 'human' ? other : null,
       botToken: opp === 'bot' ? other : null,
     });
@@ -1266,7 +1267,7 @@ function renderNet() {
   $('#net-players').html(rows.join(''));
   if (s) {
     const time = s.clock ? `${tcLabel(s.clock)} clock` : `${fmtLeft(s.move_time_ms)} per move`;
-    $('#net-rules').text(`${time} · premoves ${s.premoves === false ? 'off' : 'allowed'} · eval bar ${s.eval_bar ? 'allowed' : 'off'}${remote.analysis ? ' · analysis allowed' : ''}`);
+    $('#net-rules').text(`${time} · premoves ${s.premoves === false ? 'off' : 'allowed'} · eval bar ${s.eval_bar ? 'allowed' : 'off'}${remote.analysis || s.analysis ? ' · analysis allowed' : ''}`);
   }
   const over = !!s && s.status !== 'ongoing';
   const other = remote.side ? COLOR_NAME[opposite(remote.side)] : '';
@@ -1467,6 +1468,10 @@ function applyServer(s) {
   const prev = remote.server;
   remote.server = s;
   if (!prev) state.evalBar = s.eval_bar === true; // the host's rule: on for everyone, each can hide it (E)
+  if (prev && prev.analysis !== s.analysis) { // changed mid-game by an MCP agent
+    refreshAnalysis();
+    renderNet();
+  }
   if (s.server_now) remote.skew = s.server_now - Date.now();
   let sideSet = false;
   if (s.you && !remote.side) {

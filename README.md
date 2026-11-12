@@ -69,7 +69,7 @@ Refereed games for external bots, or a bot against a human. The server holds the
 
 | Endpoint | Body | Purpose |
 |---|---|---|
-| `POST /api/games` | `{move_time_ms? \| clock?, white?, black?, engine?}` | Create a game. Returns `201` with the game state plus `white_token` and `black_token` |
+| `POST /api/games` | `{move_time_ms? \| clock?, white?, black?, engine?, premoves?, eval_bar?, analysis?, agent?}` | Create a game. Returns `201` with the game state plus `white_token` and `black_token` |
 | `GET /api/games/{id}` | – | Game state |
 | `GET /api/games/{id}/wait?since=<ply>` | – | Long-poll: answers as soon as `ply != since` (a takeback lowers it), the game ends, an offer changes or a player connects/disconnects. Otherwise it answers after 30 s with the unchanged state |
 | `GET /api/games/by-token` | – | Game state of the game the `Authorization: Bearer <token>` belongs to, plus `you` |
@@ -80,6 +80,7 @@ Refereed games for external bots, or a bot against a human. The server holds the
 | `POST /api/games/{id}/draw` | `{token, action}` | `offer`, `accept` or `decline` a draw (see *Offers*) |
 | `POST /api/games/{id}/takeback` | `{token, action}` | `request`, `accept` or `decline` a takeback (see *Offers*) |
 | `POST /api/games/{id}/name` | `{token, name}` | Set the display name of the token's side (up to 40 chars, `""` clears it) while the game is ongoing |
+| `POST /api/games/{id}/rules` | `{token, analysis}` | Allow (`true`) or forbid (`false`) Stockfish analysis mid-game. Only in games created with `agent: true` (`409 rules_locked` otherwise) |
 
 **Tokens** are returned only once, on create. Give each player its own token: it is the only credential for that side. `POST` responses include `you`. On the `GET` endpoints, an optional `Authorization: Bearer <token>` header adds `"you": "white"|"black"` to the response and marks that side as connected.
 
@@ -88,6 +89,8 @@ Refereed games for external bots, or a bot against a human. The server holds the
 - `clock`: `{"initial_ms": 15000-10800000, "increment_ms": 0-180000}`, a chess clock instead of a per-move limit. Not together with `move_time_ms`
 - `premoves`: `true` (default) or `false`. Whether the web board lets players queue moves during the opponent's turn. A game rule chosen by the host; the server can't tell a premove from a fast move, so it is enforced by the web client only
 - `eval_bar`: `true` or `false` (default). Whether players may show the Stockfish evaluation bar (winning chances) in the web client while the game is going on. A game rule chosen by the host, enforced by the web client only
+- `analysis`: `true` or `false` (default). Whether players may use full Stockfish analysis (best move + line) in the web client while the game is going on. A game rule like `eval_bar`
+- `agent`: `true` marks a game created by an AI agent (the MCP servers set it). Only such games allow changing `analysis` mid-game via `/rules`; state shows it as `rules_changeable`
 - `white` / `black`: `{"name": "…"}`, a display name of up to 40 characters
 - `engine`: `{"side": "white"|"black", "level": 0-20}`. The server plays that side with Stockfish, and its token is not returned. This is meant for headless games such as bot vs Stockfish. Engine resources are capped: see `CHESS_BOT_ENGINE_*`. When a human plays Stockfish on the board, Stockfish runs in the browser instead and holds a normal token.
 
@@ -145,11 +148,11 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
 
 | HTTP | `error` | When |
 |---|---|---|
-| 400 | `invalid_json`, `invalid_move_format`, `missing_token`, `invalid_action`, `invalid_move_time`, `invalid_clock`, `invalid_premoves`, `invalid_eval_bar`, `invalid_name`, `invalid_since` | Malformed request |
+| 400 | `invalid_json`, `invalid_move_format`, `missing_token`, `invalid_action`, `invalid_move_time`, `invalid_clock`, `invalid_premoves`, `invalid_eval_bar`, `invalid_analysis`, `invalid_agent`, `invalid_name`, `invalid_since` | Malformed request |
 | 401 | `invalid_token` | Token matches neither side |
 | 404 | `not_found` | Unknown game or endpoint |
 | 405 | `method_not_allowed` | Wrong HTTP method |
-| 409 | `not_your_turn`, `game_over`, `cannot_abort`, `already_offered`, `no_offer`, `nothing_to_take_back` | Valid token, wrong moment |
+| 409 | `not_your_turn`, `game_over`, `cannot_abort`, `already_offered`, `no_offer`, `nothing_to_take_back`, `rules_locked` | Valid token, wrong moment |
 | 413 | `body_too_large` | Body over 4 KB |
 | 422 | `illegal_move` | Not legal in this position. Includes `legal_moves` (UCI) |
 | 429 | `rate_limited` | Too many games created from this IP. Includes `retry_after_s` |
@@ -175,13 +178,14 @@ The same game API as [MCP](https://modelcontextprotocol.io) tools, so AI agents 
 
 | Tool | Arguments | Does |
 |---|---|---|
-| `create_game` | `move_time_ms?` or `clock_initial_ms?` + `clock_increment_ms?`, `premoves?`, `eval_bar?`, `white_name?`, `black_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20), `human_side?` (`white`/`black`/`random`) | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play. With `human_side`, only the agent's token plus `human_link`, a browser link for the user to play that side |
+| `create_game` | `move_time_ms?` or `clock_initial_ms?` + `clock_increment_ms?`, `premoves?`, `eval_bar?`, `analysis?`, `white_name?`, `black_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20), `human_side?` (`white`/`black`/`random`) | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play. With `human_side`, only the agent's token plus `human_link`, a browser link for the user to play that side |
 | `make_move` | `game_id?`, `token`, `move` (UCI) | Play a move; an illegal move returns an error listing the legal moves |
 | `get_board` | `game_id?`, `token?`, `wait_since_ply?` | ASCII board, FEN, moves, legal moves, status, time left, rules (time control, premoves, eval bar) and pending offers. With `wait_since_ply` it long-polls (up to ~25 s) for the opponent's move |
 | `resign` | `game_id?`, `token` | Resign |
 | `abort` | `game_id?`, `token` | Abort before both sides' first moves |
 | `draw` | `game_id?`, `token`, `action` (`offer`/`accept`/`decline`) | Draw offers |
 | `takeback` | `game_id?`, `token`, `action` (`request`/`accept`/`decline`) | Takeback requests |
+| `set_analysis` | `game_id?`, `token`, `enabled` | Allow or forbid Stockfish analysis in the web client mid-game (games created through MCP only) |
 | `get_pgn` | `game_id?`, `token?` | PGN of the game, finished or ongoing |
 | `list_games` | – | Ongoing games created or played (with a token) through this MCP server, without tokens. Over stdio: games this process used |
 

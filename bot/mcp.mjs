@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// MCP server over stdio for the bot API: create_game, make_move, get_board, resign, abort, draw, takeback, get_pgn, list_games.
+// MCP server over stdio for the bot API: create_game, make_move, get_board, resign, abort, draw, takeback, set_analysis, get_pgn, list_games.
 // Calls the REST API at BOT_API_URL (default http://localhost:3000). No npm deps.
 //   {"command": "node", "args": ["bot/mcp.mjs"], "env": {"BOT_API_URL": "https://chess.example.com"}}
 import { createInterface } from 'node:readline';
@@ -37,7 +37,7 @@ const note = (s) => {
 };
 const post = (id, path, body) => api(`/${enc(id)}/${path}`, { method: 'POST', body }).then(note);
 const backend = {
-  create: (opts) => api('', { method: 'POST', body: opts }).then(note),
+  create: (opts) => api('', { method: 'POST', body: { ...opts, agent: true } }).then(note),
   get: (id, token) => api(`/${enc(id)}`, { token }).then((s) => (token ? note(s) : s)),
   wait: (id, since, token) => api(`/${enc(id)}/wait?since=${since}`, { token }).then((s) => (token ? note(s) : s)),
   move: (id, token, move) => post(id, 'move', { token, move }),
@@ -45,6 +45,7 @@ const backend = {
   abort: (id, token) => post(id, 'abort', { token }),
   draw: (id, token, action) => post(id, 'draw', { token, action }),
   takeback: (id, token, action) => post(id, 'takeback', { token, action }),
+  rules: (id, token, analysis) => post(id, 'rules', { token, analysis }),
   pgn: (id, token) => api(`/${enc(id)}/pgn`, { token, text: true }),
   lookup: async (token) => note(await api('/by-token', { token })).game_id,
   list: async () => {

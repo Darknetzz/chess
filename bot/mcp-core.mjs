@@ -1,7 +1,7 @@
 // Shared MCP layer for the bot API: tool definitions, JSON-RPC dispatch and result text.
 // Transports (bot/mcp.mjs over stdio, POST /mcp in bot/server.mjs) supply a backend:
 //   create(opts) / get(id, token) / wait(id, since, token) / move(id, token, uci) / resign(id, token) / abort(id, token)
-//   draw(id, token, action) / takeback(id, token, action) / pgn(id, token) -> text / lookup(token) -> id / list() -> states
+//   draw(id, token, action) / takeback(id, token, action) / rules(id, token, analysis) / pgn(id, token) -> text / lookup(token) -> id / list() -> states
 // Each returns the API game state or throws { status, code, message, extra } (the API error shape).
 // Speaks both protocol eras: 2026-07-28 (server/discover + per-request _meta) and the older
 // initialize handshake (2025-11-25 and earlier).
@@ -20,7 +20,7 @@ Otherwise call get_board with wait_since_ply = the current ply; it returns when 
 Time: nothing counts down until both sides are connected (aborted after 24 h if they never are). Then each side has first_move_ms (30 min) for its first move, else the game is aborted. After that, per-move games give every move move_time_ms; clock games ("clock" set) give each side initial_ms plus increment_ms per move. Running out loses on time. Stop when status is no longer "ongoing".
 Every tool that takes game_id also works with just your token. list_games shows ongoing games used through this server.
 To play against the user: create_game with human_side; you get only your own token plus a link for the user to play their side in the browser. Give them the link and never move for their side. If the user gives you a token (e.g. the bot token from a "Bot" game in the web client), call get_board with just that token and play only that side.
-Before both sides' first moves either side may abort; later, end a lost game with resign. Draws: draw offer/accept/decline (moving also declines). Takebacks: takeback request undoes your last move once the opponent accepts. Watch "offers" in get_board and answer offers made to you.`;
+Before both sides' first moves either side may abort; later, end a lost game with resign. Draws: draw offer/accept/decline (moving also declines). Takebacks: takeback request undoes your last move once the opponent accepts. set_analysis turns Stockfish analysis for the web client on/off mid-game (games created through MCP only). Watch "offers" in get_board and answer offers made to you.`;
 
 export class RpcError extends Error {
   constructor(code, message, data) {
@@ -58,6 +58,7 @@ export const TOOLS = [
         clock_increment_ms: int('Chess clock: time added after each move in ms (0 to 180000), only with clock_initial_ms', 0, 180_000),
         premoves: { type: 'boolean', description: 'Allow players to queue moves (premoves) in the web client. Default true' },
         eval_bar: { type: 'boolean', description: 'Allow players to show the Stockfish evaluation bar (winning chances) in the web client. Default false' },
+        analysis: { type: 'boolean', description: 'Allow players to use full Stockfish analysis (best move + line) in the web client. Default false' },
         white_name: str('Display name for white (max 40 chars)', { maxLength: 40 }),
         black_name: str('Display name for black (max 40 chars)', { maxLength: 40 }),
         engine_side: str('Let the server play this side with Stockfish', { enum: ['white', 'black'] }),
@@ -110,6 +111,9 @@ export const TOOLS = [
   }),
   action('takeback', 'Takeback', "Ask to take back your last move (and the reply to it, if made), or accept / decline the opponent's request. Clocks are not refunded.", {
     action: str('request, accept or decline', { enum: ['request', 'accept', 'decline'] }),
+  }),
+  action('set_analysis', 'Allow analysis', 'Turn Stockfish analysis (best move + line) in the web client on or off mid-game. Only in games created through MCP.', {
+    enabled: { type: 'boolean', description: 'true allows analysis, false turns it off' },
   }),
   {
     name: 'get_pgn',
@@ -166,7 +170,7 @@ export function describe(s, link) {
     : `Move time ${s.move_time_ms} ms`;
   lines.push(`Players: white ${name('white')}, black ${name('black')}. ${time}. Watch: ${link(s.game_id)}`);
   const rule = s.clock ? `clock ${tc(s.clock)}` : `${sec(s.move_time_ms)}s per move`;
-  lines.push(`Rules: ${rule}, premoves ${s.premoves === false ? 'off' : 'allowed'}, eval bar ${s.eval_bar ? 'allowed' : 'off'} (web client).`);
+  lines.push(`Rules: ${rule}, premoves ${s.premoves === false ? 'off' : 'allowed'}, eval bar ${s.eval_bar ? 'allowed' : 'off'}, analysis ${s.analysis ? 'allowed' : 'off'} (web client).`);
   const o = s.offers || {};
   const tail = (c, verb) => (!s.you ? '' : c === s.you ? ' (yours, waiting for the opponent)' : `: answer with ${verb} accept or decline`);
   if (o.draw) lines.push(`Draw offered by ${o.draw}${tail(o.draw, 'draw')}.`);
@@ -194,6 +198,10 @@ async function callTool(backend, name, a = {}, link) {
       if (a.eval_bar !== undefined) {
         if (typeof a.eval_bar !== 'boolean') fail('"eval_bar" must be a boolean');
         opts.eval_bar = a.eval_bar;
+      }
+      if (a.analysis !== undefined) {
+        if (typeof a.analysis !== 'boolean') fail('"analysis" must be a boolean');
+        opts.analysis = a.analysis;
       }
       if (optStr(a.white_name, 'white_name')) opts.white = { name: a.white_name };
       if (optStr(a.black_name, 'black_name')) opts.black = { name: a.black_name };
@@ -244,6 +252,14 @@ async function callTool(backend, name, a = {}, link) {
       const what = name === 'draw' ? 'Draw' : 'Takeback';
       const done = { offer: 'offered', request: 'requested', accept: 'accepted', decline: 'declined' }[act];
       return { s, text: `${what} ${done}.\n\n${describe(s, link)}` };
+    }
+    case 'set_analysis': {
+      const token = reqStr(a.token, 'token');
+      if (typeof a.enabled !== 'boolean') fail('"enabled" must be a boolean');
+      const s = await backend.rules(await gameId(token), token, a.enabled);
+      return { s, text: `Analysis ${a.enabled ? 'allowed' : 'turned off'}.
+
+${describe(s, link)}` };
     }
     case 'get_pgn': {
       const token = optStr(a.token, 'token') || null;

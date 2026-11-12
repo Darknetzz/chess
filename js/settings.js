@@ -65,7 +65,7 @@ export const DEFAULTS = {
   premoves: true, // default for "Allow premoves" when hosting a game (the game's rule decides)
   analysis: false,
   evalBar: false, // default for the New game dialog's "evaluation bar" (each game keeps its own)
-  allowAnalysis: false, // default for the New game dialog's "allow analysis" (games vs Stockfish)
+  allowAnalysis: false, // default for the New game dialog's "allow analysis" (online games)
   autoplaySpeed: 1.5,
 };
 

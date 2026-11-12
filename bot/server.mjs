@@ -123,14 +123,26 @@ if (db.prepare('PRAGMA user_version').get().user_version < 6) {
     COMMIT;
   `);
 }
+if (db.prepare('PRAGMA user_version').get().user_version < 7) {
+  // Game rule set by the host: may players use full Stockfish analysis (best move + line) in the web client?
+  // agent = 1 for games created by an MCP agent: only those let a player change the rules mid-game.
+  db.exec(`
+    BEGIN;
+    ALTER TABLE games ADD COLUMN analysis INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE games ADD COLUMN agent INTEGER NOT NULL DEFAULT 0;
+    PRAGMA user_version = 7;
+    COMMIT;
+  `);
+}
 const q = {
   insert: db.prepare(`INSERT INTO games (id, created_at, white_hash, black_hash, move_time_ms, deadline_at, white_name, black_name, engine_side, engine_level,
-    clock_ms, increment_ms, white_ms, black_ms, premoves, eval_bar) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+    clock_ms, increment_ms, white_ms, black_ms, premoves, eval_bar, analysis, agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   get: db.prepare('SELECT * FROM games WHERE id = ?'),
   ongoing: db.prepare(`SELECT * FROM games WHERE status = 'ongoing'`),
   save: db.prepare(`UPDATE games SET moves = ?, status = ?, result = ?, reason = ?, last_move_at = ?, deadline_at = ?, white_ms = ?, black_ms = ?, joined_at = ?,
     draw_offer = ?, takeback_offer = ? WHERE id = ?`),
   byHash: db.prepare('SELECT id FROM games WHERE white_hash = ? OR black_hash = ? LIMIT 1'),
+  setAnalysis: db.prepare('UPDATE games SET analysis = ? WHERE id = ?'),
   markMcp: db.prepare('UPDATE games SET mcp = 1 WHERE id = ? AND mcp = 0'),
   mcpOngoing: db.prepare(`SELECT id FROM games WHERE status = 'ongoing' AND mcp = 1 ORDER BY created_at DESC LIMIT 50`),
   restart: db.prepare('UPDATE games SET deadline_at = ?, last_move_at = ?, joined_at = ? WHERE id = ?'),
@@ -380,6 +392,8 @@ function state(g) {
     offers: { draw: SIDE[r.draw_offer] ?? null, takeback: SIDE[r.takeback_offer] ?? null },
     premoves: r.premoves !== 0,
     eval_bar: r.eval_bar === 1,
+    analysis: r.analysis === 1,
+    rules_changeable: r.agent === 1,
     server_now: Date.now(),
     created_at: r.created_at,
     last_move_at: r.last_move_at,
@@ -503,13 +517,15 @@ function create(body, req) {
   }
   if (body.premoves != null && typeof body.premoves !== 'boolean') throw err(400, 'invalid_premoves', '"premoves" must be true or false');
   if (body.eval_bar != null && typeof body.eval_bar !== 'boolean') throw err(400, 'invalid_eval_bar', '"eval_bar" must be true or false');
+  if (body.analysis != null && typeof body.analysis !== 'boolean') throw err(400, 'invalid_analysis', '"analysis" must be true or false');
+  if (body.agent != null && typeof body.agent !== 'boolean') throw err(400, 'invalid_agent', '"agent" must be true or false');
   rateLimit(clientIp(req));
   const tokens = { white: randomBytes(32).toString('base64url'), black: randomBytes(32).toString('base64url') };
   const now = Date.now();
   let id;
   do id = newId(); while (q.get.get(id));
   q.insert.run(id, now, hash(tokens.white), hash(tokens.black), ms, now + JOIN_MS, names.white, names.black, engine?.side ?? null, engine?.level ?? null,
-    clock?.initial ?? null, clock?.inc ?? null, clock?.initial ?? null, clock?.initial ?? null, body.premoves === false ? 0 : 1, body.eval_bar === true ? 1 : 0);
+    clock?.initial ?? null, clock?.inc ?? null, clock?.initial ?? null, clock?.initial ?? null, body.premoves === false ? 0 : 1, body.eval_bar === true ? 1 : 0, body.analysis === true ? 1 : 0, body.agent === true ? 1 : 0);
   const g = load(id);
   const out = { ...state(g) };
   // The server plays the engine side, so its token is never handed out.
@@ -698,6 +714,17 @@ function rename(g, body) {
   return state(g);
 }
 
+/** Change game rules mid-game (analysis on/off). Only in games an MCP agent created, never human vs human. */
+function rules(g, body) {
+  actor(g, body);
+  if (g.row.agent !== 1) throw err(409, 'rules_locked', 'Rules can only be changed in games created by an MCP agent');
+  if (typeof body.analysis !== 'boolean') throw err(400, 'invalid_analysis', '"analysis" must be true or false');
+  g.row.analysis = body.analysis ? 1 : 0;
+  q.setAnalysis.run(g.row.analysis, g.row.id);
+  wake(g);
+  return state(g);
+}
+
 function resign(g, body) {
   const side = authSide(g, body.token);
   touch(g, side);
@@ -778,7 +805,7 @@ function mcpBackend(req, signal) {
   };
   return {
     create: (opts) => {
-      const s = create(opts, req);
+      const s = create({ ...opts, agent: true }, req);
       markMcp(load(s.game_id));
       return s;
     },
@@ -797,6 +824,7 @@ function mcpBackend(req, signal) {
     abort: (id, token) => act(abort)(id, token),
     draw: (id, token, action) => act(draw)(id, token, { action }),
     takeback: (id, token, action) => act(takeback)(id, token, { action }),
+    rules: (id, token, analysis) => act(rules)(id, token, { analysis }),
     pgn: (id, token) => {
       const [g] = join(id, token);
       return pgn(g, siteLink(req, g.row.id));
@@ -877,8 +905,8 @@ async function handleMcp(req, res) {
   return send(res, code === RPC.version || code === RPC.headerMismatch || code === RPC.invalid ? 400 : 200, reply);
 }
 
-const ROUTE = /^\/api\/games(?:\/([^/]+)(?:\/(move|resign|wait|name|abort|draw|takeback|pgn))?)?\/?$/;
-const POST_ACTIONS = { move, name: rename, resign, abort, draw, takeback };
+const ROUTE = /^\/api\/games(?:\/([^/]+)(?:\/(move|resign|wait|name|abort|draw|takeback|rules|pgn))?)?\/?$/;
+const POST_ACTIONS = { move, name: rename, resign, abort, draw, takeback, rules };
 
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x');
