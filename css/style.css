@@ -223,6 +223,7 @@ button.link:hover:not(:disabled) { background: none; }
 .replay-title { font-weight: 600; overflow-wrap: anywhere; }
 .replay-controls { display: flex; gap: 8px; align-items: center; }
 .replay-controls button { flex: 1; }
+.replay-bar .buttons { grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); }
 label.inline { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 label.inline select { width: auto; }
 
@@ -261,6 +262,7 @@ button {
   color: inherit;
   font: inherit;
   cursor: pointer;
+  min-width: 0; /* let grid/flex tracks shrink below the label width; .lbl ellipsizes */
 }
 button:hover:not(:disabled) { background: var(--btn-hover); }
 button:has(> .icon) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
