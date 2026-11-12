@@ -565,19 +565,61 @@ function renderStatus() {
   const text = statusText();
   if ($('#status').text() !== text) $('#status').text(text); // unchanged text: don't re-announce (aria-live)
   const over = isOver() && !state.replay;
-  $('#status').toggleClass('over', over).toggleClass('lost', over && playerLost()).toggleClass('thinking', thinking);
+  const outcome = over ? playerOutcome() : null;
+  $('#status').toggleClass('over', over).toggleClass('lost', outcome?.kind === 'lost').toggleClass('thinking', thinking);
+  watchGameOver(over, outcome);
 }
 
-/** Whether the person at this screen lost the finished game (online side or local game vs the bot). */
-function playerLost() {
+/** How the finished game went for the person at this screen (online side or local game vs the bot), else null. */
+function playerOutcome() {
+  let mine, result, reason;
   if (remote) {
-    const r = remote.server?.result;
-    return !!remote.side && (r === '1-0' || r === '0-1') && r !== (remote.side === 'w' ? '1-0' : '0-1');
+    const s = remote.server;
+    if (!s || s.status === 'aborted') return null;
+    [mine, result, reason] = [remote.side, s.result, remoteEndText(s)];
+  } else if (isBot()) {
+    mine = state.humanColor;
+    ({ result, termination: reason } = outcomeOf(game, atEnd() ? state.resigned : null));
   }
-  if (!isBot()) return false;
-  if (state.resigned) return state.resigned === state.humanColor;
-  return game.isCheckmate() && game.turn() === state.humanColor;
+  if (!mine) return null;
+  if (result === '1/2-1/2') return { kind: 'draw', reason };
+  if (result !== '1-0' && result !== '0-1') return null;
+  return { kind: (result === '1-0') === (mine === 'w') ? 'won' : 'lost', reason };
 }
+
+// Game-over modal: only when a game you play ends while you watch (not on loading a finished game).
+let goKey = null;
+let goArmed = false;
+function watchGameOver(over, outcome) {
+  if (state.replay || (remote && !remote.server)) return;
+  const key = remote ? `net:${remote.id}` : `local:${state.gameToken}`;
+  if (key !== goKey) [goKey, goArmed] = [key, false];
+  if (!over) {
+    if (remote || atEnd()) goArmed = true; // live at the latest position: the next end is news
+    return;
+  }
+  if (!goArmed || !outcome) return;
+  goArmed = false;
+  showGameOver(outcome);
+}
+
+const GAME_OVER = {
+  won: ['trophy', 'You won!'],
+  lost: ['flag', 'You lost'],
+  draw: ['handshake', 'Draw'],
+};
+function showGameOver({ kind, reason }) {
+  const [ico, title] = GAME_OVER[kind];
+  $('#go-title').html(`${icon(ico)}${title}`);
+  $('#go-reason').text(reason ? reason.charAt(0).toUpperCase() + reason.slice(1) : '');
+  const dlg = $('#gameover-modal').toggleClass('lost', kind === 'lost')[0];
+  if (!dlg.open) dlg.showModal();
+}
+$('#go-close').on('click', () => $('#gameover-modal')[0].close());
+$('#go-new').on('click', () => {
+  $('#gameover-modal')[0].close();
+  askNewGame();
+});
 
 function renderMoves() {
   const fullmove = parseInt(state.startFen.split(' ')[5], 10) || 1;
