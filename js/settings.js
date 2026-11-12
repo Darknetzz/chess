@@ -65,6 +65,7 @@ export const DEFAULTS = {
   premoves: true, // default for "Allow premoves" when hosting a game (the game's rule decides)
   analysis: false,
   evalBar: false, // default for the New game dialog's "evaluation bar" (each game keeps its own)
+  allowAnalysis: false, // default for the New game dialog's "allow analysis" (games vs Stockfish)
   autoplaySpeed: 1.5,
 };
 
@@ -83,7 +84,7 @@ const ENUMS = {
 const RANGES = { level: [0, 20], boardSize: [320, 1200], volume: [0, 100], autoplaySpeed: [0.25, 5], clockMinutes: [0.25, 180], clockIncrement: [0, 180] };
 
 /** Game-mode keys: kept from the session in progress when account settings load. */
-export const GAME_KEYS = ['mode', 'side', 'level', 'orientation', 'timeControl', 'clockMinutes', 'clockIncrement', 'moveTimeMs', 'premoves', 'evalBar'];
+export const GAME_KEYS = ['mode', 'side', 'level', 'orientation', 'timeControl', 'clockMinutes', 'clockIncrement', 'moveTimeMs', 'premoves', 'evalBar', 'allowAnalysis'];
 const COLOR_RE = /^#[0-9a-f]{6}$/i;
 
 /** Keep only known keys with valid values; fill the rest from defaults. */

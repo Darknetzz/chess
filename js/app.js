@@ -724,14 +724,16 @@ let analysisKey = null; // position currently analysed (null = analyzer idle)
 let lastEval = { info: null, result: null, fen: null };
 
 /** The eval bar may be shown: always, except while playing an online game whose host didn't allow it. */
-const evalAllowed = () => !netPlaying() || remote.server?.eval_bar === true;
-/** Full analysis (best-move arrow + line): never while playing an online game. */
-const fullAnalysis = () => state.settings.analysis && !netPlaying();
+const evalAllowed = () => analysisAllowed() || remote.server?.eval_bar === true;
+/** Full analysis may be used: always, except while playing an online game (unless it's vs Stockfish with analysis allowed). */
+const analysisAllowed = () => !netPlaying() || remote.analysis === true;
+/** Full analysis (best-move arrow + line) is on. */
+const fullAnalysis = () => state.settings.analysis && analysisAllowed();
 
 function refreshAnalysis() {
   const full = fullAnalysis();
   const on = full || (state.evalBar && evalAllowed());
-  $('#analysis-btn').attr('aria-pressed', String(full)).prop('disabled', netPlaying());
+  $('#analysis-btn').attr('aria-pressed', String(full)).prop('disabled', !analysisAllowed());
   $('#evalbar-btn').attr('aria-pressed', String(on)).prop('disabled', full || !evalAllowed());
   $('#eval-bar, #analysis-info').prop('hidden', !on);
   if (!on) {
@@ -919,7 +921,6 @@ function openModal(kind) {
   $('#modal-title').text(kind === 'fen' ? 'FEN' : 'PGN');
   $('#modal-text').val(kind === 'fen' ? game.fen() : currentPgn()).attr('rows', kind === 'fen' ? 3 : 12);
   $('#modal-error').text('');
-  $('#modal-download').prop('hidden', kind !== 'pgn');
   $('#modal')[0].showModal();
   $('#modal-text').trigger('select');
 }
@@ -982,6 +983,7 @@ function askNewGame() {
   $('#ng-time').val(String(state.settings.moveTimeMs));
   $('#ng-premoves').prop('checked', state.settings.premoves);
   $('#ng-evalbar').prop('checked', state.settings.evalBar);
+  $('#ng-analysis').prop('checked', state.settings.allowAnalysis);
   $('#ng-name').val(myName());
   syncNewGameForm();
   $('#newgame-modal')[0].showModal();
@@ -1017,8 +1019,13 @@ async function startFromDialog() {
   const tc = dialogTimeControl();
   const allowPremoves = $('#ng-premoves').prop('checked');
   const evalBar = $('#ng-evalbar').prop('checked');
+  const allowAnalysis = $('#ng-analysis').prop('checked');
   const name = String($('#ng-name').val()).trim();
-  changeSettings({ side: sideSel, level, evalBar, ...(opp === 'analysis' ? {} : { ...tc.patch, premoves: allowPremoves, playerName: name }) });
+  changeSettings({
+    side: sideSel, level, evalBar,
+    ...(opp === 'analysis' ? {} : { ...tc.patch, premoves: allowPremoves, playerName: name }),
+    ...(opp === 'stockfish' ? { allowAnalysis } : {}),
+  });
   if (opp === 'analysis') {
     $('#newgame-modal')[0].close();
     if (remote) return location.assign(`${location.pathname}#analysis`);
@@ -1045,6 +1052,7 @@ async function startFromDialog() {
       token: g[`${mine}_token`],
       engineToken: opp === 'stockfish' ? other : null,
       engineLevel: opp === 'stockfish' ? level : null,
+      analysis: opp === 'stockfish' && allowAnalysis,
       invite: opp === 'human' ? other : null,
       botToken: opp === 'bot' ? other : null,
     });
@@ -1120,8 +1128,18 @@ fetch('version.json', { cache: 'no-store' })
   .then((v) => { if (v?.commit) $('#version').text(`Version ${v.commit} · ${v.date}`).prop('hidden', false); })
   .catch(() => {});
 
-$('#fen-btn').on('click', () => openModal('fen'));
-$('#pgn-btn').on('click', () => openModal('pgn'));
+$('#export-menu').on('toggle', function (e) {
+  if (e.originalEvent.newState !== 'open') return;
+  const r = $('#export-btn')[0].getBoundingClientRect();
+  this.style.minWidth = `${r.width}px`;
+  this.style.left = `${Math.max(4, Math.min(r.left, innerWidth - this.offsetWidth - 4))}px`;
+  const h = this.offsetHeight;
+  this.style.top = `${innerHeight - r.bottom - 8 < h && r.top - 8 > h ? r.top - h - 4 : r.bottom + 4}px`;
+});
+$('#export-menu').on('click', 'button[data-export]', function () {
+  $('#export-menu')[0].hidePopover();
+  openModal(this.dataset.export);
+});
 $('#modal-load').on('click', loadFromModal);
 $('#modal-close').on('click', () => $('#modal')[0].close());
 $('#modal-copy').on('click', async () => {
@@ -1133,7 +1151,11 @@ $('#modal-copy').on('click', async () => {
     $('#modal-error').text('Copy failed — press Ctrl+C.');
   }
 });
-$('#modal-download').on('click', () => download(String($('#modal-text').val()), `chess-${today()}.pgn`, 'application/x-chess-pgn'));
+$('#modal-download').on('click', () => {
+  const text = String($('#modal-text').val());
+  if (modalKind === 'fen') download(`${text.trim()}\n`, `chess-${today()}.fen`, 'text/plain');
+  else download(text, `chess-${today()}.pgn`, 'application/x-chess-pgn');
+});
 
 $(document).on('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -1241,7 +1263,7 @@ function renderNet() {
   $('#net-players').html(rows.join(''));
   if (s) {
     const time = s.clock ? `${tcLabel(s.clock)} clock` : `${fmtLeft(s.move_time_ms)} per move`;
-    $('#net-rules').text(`${time} · premoves ${s.premoves === false ? 'off' : 'allowed'} · eval bar ${s.eval_bar ? 'allowed' : 'off'}`);
+    $('#net-rules').text(`${time} · premoves ${s.premoves === false ? 'off' : 'allowed'} · eval bar ${s.eval_bar ? 'allowed' : 'off'}${remote.analysis ? ' · analysis allowed' : ''}`);
   }
   const over = !!s && s.status !== 'ongoing';
   const other = remote.side ? COLOR_NAME[opposite(remote.side)] : '';

@@ -281,6 +281,15 @@ input[type="range"] { accent-color: var(--accent); }
 
 .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .buttons .wide { grid-column: 1 / -1; }
+.menu {
+  position: fixed; inset: auto; margin: 0; padding: 4px;
+  flex-direction: column; gap: 4px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); color: var(--text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+.menu:popover-open { display: flex; }
+.menu button { width: 100%; justify-content: flex-start; }
 .nav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 
 button {

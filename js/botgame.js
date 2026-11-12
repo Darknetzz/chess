@@ -29,7 +29,7 @@ async function req(path, { method = 'GET', body, token, signal } = {}) {
   return data;
 }
 
-/** Per-game local data: { token, engineToken, engineLevel, invite, botToken, saved }. */
+/** Per-game local data: { token, engineToken, engineLevel, analysis, invite, botToken, saved }. */
 export const netStore = {
   get(id) {
     try {
@@ -63,7 +63,7 @@ export function remoteFromUrl(loc = location) {
   if (urlToken) {
     // A token in the link replaces whatever this browser had for the game (e.g. joining from an invite).
     const prev = netStore.get(id);
-    netStore.set(id, prev.token === urlToken ? {} : { token: urlToken, engineToken: null, invite: null, botToken: null });
+    netStore.set(id, prev.token === urlToken ? {} : { token: urlToken, engineToken: null, analysis: null, invite: null, botToken: null });
     history.replaceState(null, '', `${loc.pathname}?game=${id}`);
   }
   const stored = netStore.get(id);
