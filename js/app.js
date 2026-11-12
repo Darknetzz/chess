@@ -251,8 +251,8 @@ function displayPieces() {
 }
 
 // ---- Premoves & move confirmation (online games) ---------------------------------
-/** Playing an online game that is going on, at the latest position, with premoves enabled. */
-const canPremove = () => !!remote?.side && state.settings.premoves && remote.server?.status === 'ongoing' && atEnd();
+/** Playing an online game that is going on, at the latest position, whose host allowed premoves. */
+const canPremove = () => !!remote?.side && remote.server?.premoves !== false && remote.server?.status === 'ongoing' && atEnd();
 /** The board takes premoves now: it's the opponent's turn or our move is still on its way to the server. */
 const premoveMode = () => canPremove() && !pendingMove && (remote.busy || game.turn() !== remote.side);
 
@@ -891,6 +891,7 @@ function askNewGame() {
   $('#ng-clock-min').val(state.settings.clockMinutes);
   $('#ng-clock-inc').val(state.settings.clockIncrement);
   $('#ng-time').val(String(state.settings.moveTimeMs));
+  $('#ng-premoves').prop('checked', state.settings.premoves);
   syncNewGameForm();
   $('#newgame-modal')[0].showModal();
 }
@@ -922,7 +923,8 @@ async function startFromDialog() {
   const sideSel = String($('#ng-side').val());
   const level = Number($('#ng-level').val());
   const tc = dialogTimeControl();
-  changeSettings({ side: sideSel, level, ...(opp === 'analysis' ? {} : tc.patch) });
+  const allowPremoves = $('#ng-premoves').prop('checked');
+  changeSettings({ side: sideSel, level, ...(opp === 'analysis' ? {} : { ...tc.patch, premoves: allowPremoves }) });
   if (opp === 'analysis') {
     $('#newgame-modal')[0].close();
     if (remote) return location.assign(`${location.pathname}#analysis`);
@@ -938,6 +940,7 @@ async function startFromDialog() {
   try {
     const g = await botApi.create({
       ...tc.opts,
+      premoves: allowPremoves,
       [mine]: { name: api.user?.username || '' },
       [theirs]: { name: theirName },
     });
@@ -1117,6 +1120,10 @@ function renderNet() {
       + `<span class="name">${escHtml(p.name || COLOR_NAME[c])}</span><span class="tag">${tags}</span></li>`;
   });
   $('#net-players').html(rows.join(''));
+  if (s) {
+    const time = s.clock ? `${tcLabel(s.clock)} clock` : `${fmtLeft(s.move_time_ms)} per move`;
+    $('#net-rules').text(`${time} · premoves ${s.premoves === false ? 'off' : 'allowed'}`);
+  }
   const over = !!s && s.status !== 'ongoing';
   const other = remote.side ? COLOR_NAME[opposite(remote.side)] : '';
   $('#net-invite').prop('hidden', !remote.invite || over);

@@ -21,7 +21,7 @@ Browser chess against a friend (invite link), Stockfish or your own bot, all ref
 - Move list (click to jump), undo/redo (`←`/`→`), `Home`/`End`, flip (`F`), analysis (`A`), coordinates off/edges/every tile (`C`)
 - **Stockfish analysis** (`A`, or Settings): live best-move arrow, eval bar and depth for the shown position, on a separate full-strength worker; live games played with it on are marked *assisted* (badge in My games, `Annotator` header in PGN)
 - **Settings** (`S`): board themes + custom colours, highlight colour, 7 piece sets, board size, light/dark UI, animation speed, sounds/volume, toggles for hints/highlights/auto-queen/confirmations
-- **Premoves**: in online games, queue one or more moves during the opponent's turn; each is played the moment it's your turn if it's legal (otherwise the queue is dropped). Right-click the board or press `Esc` to clear.
+- **Premoves**: in online games, queue one or more moves during the opponent's turn; each is played the moment it's your turn if it's legal (otherwise the queue is dropped). Right-click the board or press `Esc` to clear. The host turns premoves on or off for the game in the New game dialog.
 - **Confirm moves** (Settings, off by default): in online games a move is shown on the board and only sent after *Confirm move* (`Enter`); *Cancel* (`Esc`) takes it back
 - **Accounts**: username + password registration/login; settings and games sync to the account
 - **My games** (`G`): finished online games are saved when they end. Analysis-board games autosave (to the account, or this browser for guests — guests can upload them after logging in); replay with autoplay, continue/resume from any move, delete
@@ -77,6 +77,7 @@ Refereed games for external bots, or a bot against a human. The server holds the
 **Create options** (all optional):
 - `move_time_ms`: per-move time limit (see *Time control*)
 - `clock`: `{"initial_ms": 15000-10800000, "increment_ms": 0-180000}`, a chess clock instead of a per-move limit. Not together with `move_time_ms`
+- `premoves`: `true` (default) or `false`. Whether the web board lets players queue moves during the opponent's turn. A game rule chosen by the host; the server can't tell a premove from a fast move, so it is enforced by the web client only
 - `white` / `black`: `{"name": "…"}`, a display name of up to 40 characters
 - `engine`: `{"side": "white"|"black", "level": 0-20}`. The server plays that side with Stockfish, and its token is not returned. This is meant for headless games such as bot vs Stockfish. Engine resources are capped: see `CHESS_BOT_ENGINE_*`. When a human plays Stockfish on the board, Stockfish runs in the browser instead and holds a normal token.
 
@@ -107,6 +108,7 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
   "move_time_ms": 30000,        // clock games: the limit for each side's first move
   "clock": null,                // clock games: { "initial_ms": 300000, "increment_ms": 3000 }
   "clocks": null,               // clock games: time left now, { "white": 297512, "black": 300000 }
+  "premoves": true,             // the host allows premoves in the web client
   "server_now": 1794420812000,  // server time of this response, to correct for client clock skew
   "created_at": 1794420808543,  // all times: Unix epoch milliseconds
   "last_move_at": 1794420810000,// null before the first move
@@ -123,7 +125,7 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
 
 | HTTP | `error` | When |
 |---|---|---|
-| 400 | `invalid_json`, `invalid_move_format`, `missing_token`, `invalid_move_time`, `invalid_clock`, `invalid_since` | Malformed request |
+| 400 | `invalid_json`, `invalid_move_format`, `missing_token`, `invalid_move_time`, `invalid_clock`, `invalid_premoves`, `invalid_since` | Malformed request |
 | 401 | `invalid_token` | Token matches neither side |
 | 404 | `not_found` | Unknown game or endpoint |
 | 405 | `method_not_allowed` | Wrong HTTP method |
@@ -153,7 +155,7 @@ The same game API as [MCP](https://modelcontextprotocol.io) tools, so AI agents 
 
 | Tool | Arguments | Does |
 |---|---|---|
-| `create_game` | `move_time_ms?` or `clock_initial_ms?` + `clock_increment_ms?`, `white_name?`, `black_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20) | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play |
+| `create_game` | `move_time_ms?` or `clock_initial_ms?` + `clock_increment_ms?`, `premoves?`, `white_name?`, `black_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20) | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play |
 | `make_move` | `game_id`, `token`, `move` (UCI) | Play a move; an illegal move returns an error listing the legal moves |
 | `get_board` | `game_id`, `token?`, `wait_since_ply?` | ASCII board, FEN, moves, legal moves, status, time left. With `wait_since_ply` it long-polls (up to ~25 s) for the opponent's move |
 

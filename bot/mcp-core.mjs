@@ -43,6 +43,7 @@ export const TOOLS = [
         move_time_ms: int('Time limit per move in ms (1000 to 86400000). Default: server setting, usually 30000', 1000, 86_400_000),
         clock_initial_ms: int('Chess clock: time per side in ms (15000 to 10800000). Not with move_time_ms', 15_000, 10_800_000),
         clock_increment_ms: int('Chess clock: time added after each move in ms (0 to 180000), only with clock_initial_ms', 0, 180_000),
+        premoves: { type: 'boolean', description: 'Allow players to queue moves (premoves) in the web client. Default true' },
         white_name: str('Display name for white (max 40 chars)', { maxLength: 40 }),
         black_name: str('Display name for black (max 40 chars)', { maxLength: 40 }),
         engine_side: str('Let the server play this side with Stockfish', { enum: ['white', 'black'] }),
@@ -135,6 +136,10 @@ async function callTool(backend, name, a = {}, link) {
       if (optInt(a.clock_initial_ms, 'clock_initial_ms') !== undefined) {
         opts.clock = { initial_ms: a.clock_initial_ms, increment_ms: optInt(a.clock_increment_ms, 'clock_increment_ms') ?? 0 };
       } else if (a.clock_increment_ms !== undefined) fail('"clock_increment_ms" needs "clock_initial_ms"');
+      if (a.premoves !== undefined) {
+        if (typeof a.premoves !== 'boolean') fail('"premoves" must be a boolean');
+        opts.premoves = a.premoves;
+      }
       if (optStr(a.white_name, 'white_name')) opts.white = { name: a.white_name };
       if (optStr(a.black_name, 'black_name')) opts.black = { name: a.black_name };
       if (optStr(a.engine_side, 'engine_side')) opts.engine = { side: a.engine_side, level: optInt(a.engine_level, 'engine_level') ?? 5 };

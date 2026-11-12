@@ -64,6 +64,7 @@
 
       <div class="net-panel" id="net-panel" hidden>
         <ul class="net-players" id="net-players"></ul>
+        <p class="net-rules" id="net-rules"></p>
         <div class="net-share" id="net-invite" hidden>
           <span class="net-label">Invite link: opens the game as <b id="net-invite-side"></b></span>
           <div class="copy-row"><input id="net-invite-url" readonly><button type="button" data-copy="#net-invite-url" title="Copy"><i data-icon="copy"></i></button></div>
@@ -152,6 +153,7 @@
           <label>Increment (s) <input id="ng-clock-inc" type="number" min="0" max="180" step="1" required></label>
         </div>
         <p class="ng-online ng-clock-note muted">Clocks start once both sides have made their first move; a side that doesn't make its first move in time aborts the game.</p>
+        <label class="ng-online check"><input type="checkbox" id="ng-premoves"> Allow premoves (queue moves during the opponent's turn)</label>
         <label class="ng-online ng-move">Time per move (running out loses)
           <select id="ng-time">
             <option value="30000">30 seconds</option>
@@ -264,7 +266,6 @@
         <label class="check"><input type="checkbox" name="autoQueen"> Always promote to queen</label>
         <label class="check"><input type="checkbox" name="confirmActions"> Confirm new game / resign</label>
         <label class="check"><input type="checkbox" name="confirmMove"> Confirm moves in online games</label>
-        <label class="check"><input type="checkbox" name="premoves"> Premoves: queue moves during the opponent's turn (right-click / Esc clears)</label>
         <label class="check"><input type="checkbox" name="analysis"> Stockfish analysis (best move + evaluation; marks live games as assisted)</label>
         <label>Appearance
           <select name="uiTheme">
