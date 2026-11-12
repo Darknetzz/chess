@@ -31,6 +31,9 @@ services:
       BOT_ENGINE_MAX_PROCS: "${CHESS_BOT_ENGINE_MAX_PROCS:-2}"
       BOT_ENGINE_MAX_DEPTH: "${CHESS_BOT_ENGINE_MAX_DEPTH:-12}"
       BOT_ENGINE_MAX_MS: "${CHESS_BOT_ENGINE_MAX_MS:-2000}"
+      # MCP over HTTP at /mcp: bearer token (empty = /mcp disabled) and browser origins allowed to call it
+      MCP_TOKEN: "${CHESS_MCP_TOKEN:-}"
+      MCP_ALLOWED_ORIGINS: "${CHESS_MCP_ALLOWED_ORIGINS:-}"
     volumes:
       - bot-data:/data
     labels:

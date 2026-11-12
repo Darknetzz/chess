@@ -37,8 +37,10 @@ Open http://localhost:8080. `.env` options:
 - `CHESS_BOT_CREATE_PER_HOUR` – games one IP may create per hour (default 30)
 - `CHESS_BOT_PROXY_HOPS` – how many reverse proxies append to `X-Forwarded-For` in front of the bot service. Default 1 (the bundled Apache). Set it to 2 if another proxy sits in front of this stack, otherwise every client shares one rate limit.
 - `CHESS_BOT_ENGINE_MAX_PROCS` / `CHESS_BOT_ENGINE_MAX_DEPTH` / `CHESS_BOT_ENGINE_MAX_MS` – caps for server-side Stockfish in headless games: parallel engine processes (default 2, each single-threaded with a 16 MB hash), search depth (12) and time per move (2000 ms)
+- `CHESS_MCP_TOKEN` – bearer token for MCP over HTTP at `/mcp` (see [MCP](#mcp)). Empty (default) disables `/mcp` (404). Generate one with `openssl rand -base64 32`.
+- `CHESS_MCP_ALLOWED_ORIGINS` – comma-separated browser origins allowed to call `/mcp`. Requests with any other `Origin` header get 403 (DNS-rebinding guard); MCP clients normally send none.
 
-The SQLite DB lives in the `chess-data` volume (`/data/chess.sqlite`). Bot API games live in the `bot-data` volume (`/data/bot.sqlite`). Apache proxies `/api/games` and `/api/games/*` to the `bot` container.
+The SQLite DB lives in the `chess-data` volume (`/data/chess.sqlite`). Bot API games live in the `bot-data` volume (`/data/bot.sqlite`). Apache proxies `/api/games`, `/api/games/*` and `/mcp` to the `bot` container. Behind another reverse proxy (e.g. NPMplus) just forward the whole site; `https://<host>/mcp` then works, and set `CHESS_BOT_PROXY_HOPS=2`.
 
 ## Host on Apache / nginx
 Copy `index.html`, `.htaccess`, `api/`, `css/`, `js/`, `img/`, `vendor/` into the docroot (subdirectories work; all paths are relative).
@@ -46,7 +48,7 @@ Copy `index.html`, `.htaccess`, `api/`, `css/`, `js/`, `img/`, `vendor/` into th
 - Needs **PHP 8.5** with `pdo_sqlite` for `api/*.php`. Set `DATA_DIR` to a writable directory **outside** the docroot (default: `data/` next to `api/`, protected by `.htaccess`).
 - **Apache 2.4**: `.htaccess` sets the WASM MIME type, compression, caching and blocks `data/` (needs `AllowOverride FileInfo Indexes AuthConfig Limit`; `mod_headers`/`mod_deflate` optional).
 - **nginx**: see `nginx.conf` (php-fpm `fastcgi_pass`, `/data` denied, `/api/games` proxied to the bot service). Stock `mime.types` already maps `.wasm`.
-- **Bot API** (optional): run `node bot/server.mjs` with Node ≥ 26 and `vendor/` next to `bot/`. Env: `PORT` (3000), `DATA_DIR`, `BOT_MOVE_TIME_MS`, `BOT_CREATE_PER_HOUR`, `BOT_PROXY_HOPS`, `BOT_WAIT_MS` (long-poll, 30000). Proxy `^/api/games(/|$)` to it with a read timeout above 30 s. On Apache use `bot/apache.conf`, which needs `mod_proxy_http`.
+- **Bot API** (optional): run `node bot/server.mjs` with Node ≥ 26 and `vendor/` next to `bot/`. Env: `PORT` (3000), `DATA_DIR`, `BOT_MOVE_TIME_MS`, `BOT_CREATE_PER_HOUR`, `BOT_PROXY_HOPS`, `BOT_WAIT_MS` (long-poll, 30000), `MCP_TOKEN`, `MCP_ALLOWED_ORIGINS`. Proxy `^/api/games(/|$)` and `/mcp` to it with a read timeout above 30 s. On Apache use `bot/apache.conf`, which needs `mod_proxy_http`.
 - Without PHP the app still works as before in guest mode: games and settings stay in `localStorage`, login is hidden.
 
 Serve over HTTPS in production (the session cookie is marked `Secure` automatically when it is). Must be served over HTTP(S) — `file://` blocks ES modules and workers.
@@ -135,6 +137,31 @@ node bot/random_bot.mjs http://localhost:8080 <game_id> <black_token>
 - `/?game=<id>#token=<token>` (or `&token=`) joins as that side. The token goes in the URL fragment, so it never reaches server logs. The page then moves it into `localStorage` (`chess.net.<id>`) and drops it from the address bar, so reloading `/?game=<id>` resumes as that player.
 - Opening an invite link in a browser that already holds the other side's token switches that browser to the invited side.
 - Finished games are saved to My games (mode `net`).
+
+### MCP
+The same game API as [MCP](https://modelcontextprotocol.io) tools, so AI agents can play without writing HTTP code:
+
+| Tool | Arguments | Does |
+|---|---|---|
+| `create_game` | `move_time_ms?`, `white_name?`, `black_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20) | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play |
+| `make_move` | `game_id`, `token`, `move` (UCI) | Play a move; an illegal move returns an error listing the legal moves |
+| `get_board` | `game_id`, `token?`, `wait_since_ply?` | ASCII board, FEN, moves, legal moves, status, time left. With `wait_since_ply` it long-polls (up to ~25 s) for the opponent's move |
+
+Results are text for the model plus the raw game state as `structuredContent`. API errors (wrong token, not your turn, …) come back as tool errors (`isError: true`) the agent can read and recover from. Both protocol eras are supported: `2026-07-28` (`server/discover`, per-request `_meta`) and the `initialize` handshake (`2025-11-25`, `2025-06-18`, `2025-03-26`).
+
+**HTTP** (Streamable HTTP, built into the bot service, no extra container): set `CHESS_MCP_TOKEN`, then point the client at `/mcp` with that bearer token:
+```json
+{ "mcpServers": { "chess": { "type": "http", "url": "https://chess.example.com/mcp",
+  "headers": { "Authorization": "Bearer <CHESS_MCP_TOKEN>" } } } }
+```
+`POST /mcp` only (one JSON-RPC message per request, JSON responses, no SSE; `GET` → 405). Missing or wrong bearer → 401, `/mcp` without `MCP_TOKEN` configured → 404. The `MCP_TOKEN` only gates access to `/mcp`; each game side still needs its own game token in the tool arguments. Game creation shares the per-IP rate limit.
+
+**stdio** (local; needs Node ≥ 26 and this repo checked out). `bot/mcp.mjs` calls the REST API at `BOT_API_URL` (the site root, default `http://localhost:3000`, i.e. `node bot/server.mjs` running locally; use `http://localhost:8080` for the Docker stack):
+```json
+{ "mcpServers": { "chess": { "command": "node", "args": ["/path/to/chess/bot/mcp.mjs"],
+  "env": { "BOT_API_URL": "https://chess.example.com" } } } }
+```
+Claude Code: `claude mcp add --transport http chess https://chess.example.com/mcp --header "Authorization: Bearer <token>"` or `claude mcp add chess -e BOT_API_URL=http://localhost:8080 -- node bot/mcp.mjs`.
 
 ## Licenses
 GPLv3 (`LICENSE`), required by Stockfish. chess.js: BSD-2-Clause (`vendor/chess.js/LICENSE`). Piece sets via lichess:

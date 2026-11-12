@@ -3,7 +3,7 @@ FROM node:26.13.0-alpine
 WORKDIR /app
 COPY vendor/chess.js /app/vendor/chess.js
 COPY vendor/stockfish /app/vendor/stockfish
-COPY bot/server.mjs bot/engine.mjs /app/bot/
+COPY bot/server.mjs bot/engine.mjs bot/mcp-core.mjs bot/mcp.mjs /app/bot/
 RUN mkdir -p /data && chown node:node /data
 
 USER node
