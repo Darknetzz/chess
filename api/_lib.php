@@ -34,15 +34,21 @@ function method(): string
     return $_SERVER['REQUEST_METHOD'] ?? 'GET';
 }
 
+/** Persistent storage (the /data volume in Docker); created on demand. */
+function data_dir(string $sub = ''): string
+{
+    $dir = (getenv('DATA_DIR') ?: dirname(__DIR__) . '/data') . ($sub === '' ? '' : "/$sub");
+    if (!is_dir($dir) && !mkdir($dir, 0770, true) && !is_dir($dir)) {
+        throw new RuntimeException("Cannot create data dir $dir");
+    }
+    return $dir;
+}
+
 function db(): PDO
 {
     static $pdo = null;
     if ($pdo) return $pdo;
-    $dir = getenv('DATA_DIR') ?: dirname(__DIR__) . '/data';
-    if (!is_dir($dir) && !mkdir($dir, 0770, true) && !is_dir($dir)) {
-        throw new RuntimeException("Cannot create data dir $dir");
-    }
-    $pdo = new PDO('sqlite:' . $dir . '/chess.sqlite', null, null, [
+    $pdo = new PDO('sqlite:' . data_dir() . '/chess.sqlite', null, null, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
@@ -110,6 +116,8 @@ function start_session(): void
         'httponly' => true,
         'samesite' => 'Lax',
     ]);
+    // Keep sessions on the data volume so logins survive container rebuilds.
+    session_save_path(data_dir('sessions'));
     ini_set('session.use_strict_mode', '1');
     ini_set('session.gc_maxlifetime', (string)(60 * 60 * 24 * 30));
     session_start();
