@@ -107,14 +107,13 @@
     <form id="newgame-form">
       <h2><i data-icon="square-plus"></i>New game</h2>
       <div class="group">
-        <label>Opponent
-          <select id="ng-opponent">
-            <option value="human">Human: send an invite link</option>
-            <option value="stockfish">Stockfish (runs in this browser)</option>
-            <option value="bot">External bot: get an API token</option>
-            <option value="analysis">None: analysis board (local, both sides, undo)</option>
-          </select>
-        </label>
+        <fieldset id="ng-opponent" class="tiles">
+          <legend>Opponent</legend>
+          <label class="tile"><input type="radio" name="opponent" value="human" checked><i data-icon="users"></i><b>Human</b><small>Send an invite link</small></label>
+          <label class="tile"><input type="radio" name="opponent" value="stockfish"><i data-icon="cpu"></i><b>Stockfish</b><small>Runs in this browser</small></label>
+          <label class="tile"><input type="radio" name="opponent" value="bot"><i data-icon="bot"></i><b>External bot</b><small>Get an API token</small></label>
+          <label class="tile"><input type="radio" name="opponent" value="analysis"><i data-icon="microscope"></i><b>Analysis board</b><small>Local, both sides, undo</small></label>
+        </fieldset>
         <label class="ng-online">You play
           <select id="ng-side">
             <option value="w">White</option>

@@ -241,6 +241,31 @@ label.inline select { width: auto; }
 .group label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .group label[hidden] { display: none; }
 
+/* Selectable tiles (radio group) */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.tiles legend { padding: 0 0 4px; font-size: 13px; color: var(--muted); }
+.group .tiles .tile {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--btn);
+  color: var(--text);
+  cursor: pointer;
+}
+.tile:hover { background: var(--btn-hover); }
+.tile input { position: absolute; opacity: 0; pointer-events: none; }
+.tile > .icon { grid-row: span 2; width: 22px; height: 22px; color: var(--muted); }
+.tile b { font-size: 14px; }
+.tile small { color: var(--muted); font-size: 12px; }
+.tile:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--btn)); box-shadow: inset 0 0 0 1px var(--accent); }
+.tile:has(input:checked) > .icon { color: var(--accent); }
+.tile:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 select, input[type="range"], textarea, input[type="text"], input:not([type]), input[type="password"], input[type="number"] { width: 100%; font: inherit; color: inherit; }
 select, textarea, input:not([type]), input[type="password"], input[type="number"], input[type="text"] {
   padding: 6px 8px;

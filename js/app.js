@@ -819,14 +819,14 @@ function askNewGame() {
 }
 
 function syncNewGameForm() {
-  const opp = $('#ng-opponent').val();
+  const opp = ngOpponent();
   $('#newgame-form .ng-online').prop('hidden', opp === 'analysis');
   $('#newgame-form .ng-stockfish').prop('hidden', opp !== 'stockfish');
 }
 
 /** Start the chosen game: online ones are created on the server, then the page opens them by URL. */
 async function startFromDialog() {
-  const opp = $('#ng-opponent').val();
+  const opp = ngOpponent();
   const sideSel = String($('#ng-side').val());
   const level = Number($('#ng-level').val());
   changeSettings({ side: sideSel, level });
@@ -865,6 +865,9 @@ async function startFromDialog() {
 }
 
 $('#ng-opponent').on('change', syncNewGameForm);
+function ngOpponent() {
+  return $('#ng-opponent input:checked').val();
+}
 $('#ng-level').on('input', (e) => $('#ng-level-out').text(e.target.value));
 $('#ng-cancel').on('click', () => $('#newgame-modal')[0].close());
 $('#newgame-form').on('submit', (e) => {
