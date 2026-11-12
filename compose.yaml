@@ -29,7 +29,7 @@ services:
       BOT_PROXY_HOPS: "${CHESS_BOT_PROXY_HOPS:-1}"
       # server-side Stockfish (headless games only): parallel engine processes, depth and time caps
       BOT_ENGINE_MAX_PROCS: "${CHESS_BOT_ENGINE_MAX_PROCS:-2}"
-      BOT_ENGINE_MAX_DEPTH: "${CHESS_BOT_ENGINE_MAX_DEPTH:-12}"
+      BOT_ENGINE_MAX_DEPTH: "${CHESS_BOT_ENGINE_MAX_DEPTH:-30}"
       BOT_ENGINE_MAX_MS: "${CHESS_BOT_ENGINE_MAX_MS:-2000}"
       # MCP over HTTP at /mcp: bearer token (empty = /mcp disabled) and browser origins allowed to call it
       MCP_TOKEN: "${CHESS_MCP_TOKEN:-}"

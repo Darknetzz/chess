@@ -1,5 +1,16 @@
 // Thin promise wrapper around the Stockfish WASM web worker (UCI protocol).
 
+/**
+ * Bot strength curve: { depth, ms } for Skill Level 0–20. Levels 0–15 keep the original depth = level + 1;
+ * 16–20 get deeper caps and more time so the top levels are limited by time, not depth.
+ * Mirrored in bot/engine.mjs (server-side bot).
+ */
+export function botSearch(lvl) {
+  return lvl <= 15
+    ? { depth: lvl + 1, ms: 50 + lvl * 50 }
+    : { depth: 16 + (lvl - 15) * 3, ms: 800 + (lvl - 15) * 340 };
+}
+
 export class Engine {
   constructor(url) {
     this.url = url;
@@ -68,8 +79,9 @@ export class Engine {
       this.pending = { resolve };
       this.send(`setoption name Skill Level value ${lvl}`);
       this.send(`position fen ${fen}`);
-      const ms = Math.max(20, Math.min(50 + lvl * 50, capMs ?? Infinity));
-      this.send(`go depth ${lvl + 1} movetime ${ms}`);
+      const s = botSearch(lvl);
+      const ms = Math.max(20, Math.min(s.ms, capMs ?? Infinity));
+      this.send(`go depth ${s.depth} movetime ${ms}`);
       this.searching = true;
     });
   }
@@ -105,7 +117,7 @@ export class Engine {
  * analyze(fen, onUpdate) streams { depth, cp, mate, best } from White's point of view.
  */
 export class Analyzer {
-  constructor(url, depth = 20) {
+  constructor(url, depth = 28) {
     this.url = url;
     this.depth = depth;
     this.worker = null;
@@ -128,7 +140,10 @@ export class Analyzer {
       this.worker.onerror = (e) => reject(e.message || e);
       this.worker.onmessage = (e) => {
         const line = typeof e.data === 'string' ? e.data : String(e.data ?? '');
-        if (line === 'uciok') this.worker.postMessage('isready');
+        if (line === 'uciok') {
+          this.worker.postMessage('setoption name Hash value 64'); // deep searches thrash the default 16 MB
+          this.worker.postMessage('isready');
+        }
         else if (line === 'readyok') resolve();
         else if (line.startsWith('info ')) this._onInfo(line);
         else if (line.startsWith('bestmove')) this._onBestmove();

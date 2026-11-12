@@ -50,7 +50,7 @@ class Proc {
  * bestMove(fen, level, capMs?) resolves with a UCI move or null (no legal move); capMs caps the search time.
  * evaluate(fen) resolves with { cp, mate } for the side to move.
  */
-export function enginePool({ maxProcs = 2, maxDepth = 12, maxMs = 2000 } = {}) {
+export function enginePool({ maxProcs = 2, maxDepth = 30, maxMs = 2000 } = {}) {
   const idle = [];
   const queue = [];
   let running = 0;
@@ -66,9 +66,10 @@ export function enginePool({ maxProcs = 2, maxDepth = 12, maxMs = 2000 } = {}) {
 
   async function search(fen, level, capMs) {
     const lvl = Math.max(0, Math.min(20, level | 0));
-    // Same strength curve as the browser bot (js/engine.js), clamped by the server caps.
-    const depth = Math.min(lvl + 1, maxDepth);
-    const ms = Math.max(20, Math.min(50 + lvl * 50, maxMs, capMs ?? Infinity));
+    // Same strength curve as the browser bot (botSearch in js/engine.js), clamped by the server caps.
+    const s = lvl <= 15 ? { depth: lvl + 1, ms: 50 + lvl * 50 } : { depth: 16 + (lvl - 15) * 3, ms: 800 + (lvl - 15) * 340 };
+    const depth = Math.min(s.depth, maxDepth);
+    const ms = Math.max(20, Math.min(s.ms, maxMs, capMs ?? Infinity));
     let p = idle.pop();
     if (!p || p.dead) p = await fresh();
     try {

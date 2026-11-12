@@ -34,7 +34,7 @@ const NAME_MAX = 40;
 const PRESENCE_MS = 40_000; // a side counts as connected while it has an open /wait or made a request this recently
 const engines = enginePool({
   maxProcs: envInt('BOT_ENGINE_MAX_PROCS', 2),
-  maxDepth: envInt('BOT_ENGINE_MAX_DEPTH', 12),
+  maxDepth: envInt('BOT_ENGINE_MAX_DEPTH', 30),
   maxMs: envInt('BOT_ENGINE_MAX_MS', 2000),
 });
 
