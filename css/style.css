@@ -356,6 +356,8 @@ dialog .buttons.three { grid-template-columns: repeat(3, 1fr); }
 dialog .buttons.one { grid-template-columns: 1fr; }
 #settings-modal .buttons { grid-template-columns: 1fr 1fr; }
 dialog h2 small { font-size: 13px; }
+dialog.fairplay { width: min(380px, 92vw); text-align: center; }
+dialog.fairplay p { margin: 0 0 10px; }
 dialog.wide-dialog { width: min(760px, 94vw); }
 dialog .group { margin-bottom: 8px; }
 

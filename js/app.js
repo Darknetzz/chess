@@ -55,6 +55,7 @@ let premoves = []; // online games: moves queued during the opponent's turn [{ f
 let pendingMove = null; // online games with "confirm moves": played on the board, not sent yet { from, to, promotion, san }
 // Server-refereed bot API game (?game=<id>[#token=<t>]). Every live game except the local analysis board is one.
 // { id, token, engineToken, engineLevel, invite, botToken, saved, side, server, busy, engineBusy, error }
+const joinedByLink = /token=/.test(location.hash + location.search); // opened an invite (play-as) link
 const remote = remoteFromUrl();
 if (remote) Object.assign(remote, { side: null, server: null, busy: false, engineBusy: false, error: null });
 
@@ -936,6 +937,7 @@ async function startFromDialog() {
   const [mine, theirs] = me === 'w' ? ['white', 'black'] : ['black', 'white'];
   const theirName = { human: '', stockfish: `Stockfish (level ${level})`, bot: 'Bot' }[opp];
   $('#ng-start').prop('disabled', true);
+  if (opp === 'human') await fairPlayOnce();
   $('#ng-error').text('Creating game…');
   try {
     const g = await botApi.create({
@@ -1390,6 +1392,30 @@ async function remoteStart() {
   }
 }
 
+// ---- Fair play reminder (once per browser, before the first game against a person) ----
+const FAIRPLAY_KEY = 'chess.fairplay.v1';
+
+function fairPlayOnce() {
+  try {
+    if (localStorage.getItem(FAIRPLAY_KEY)) return Promise.resolve();
+  } catch {
+    /* storage unavailable: show it */
+  }
+  const dlg = $('#fairplay-modal')[0];
+  return new Promise((resolve) => {
+    dlg.addEventListener('close', () => {
+      try {
+        localStorage.setItem(FAIRPLAY_KEY, '1');
+      } catch {
+        /* ignore */
+      }
+      resolve();
+    }, { once: true });
+    dlg.showModal();
+  });
+}
+$('#fairplay-ok').on('click', () => $('#fairplay-modal')[0].close());
+
 // ---- Boot ------------------------------------------------------------------
 if (!remote) restore();
 applySettings();
@@ -1415,6 +1441,7 @@ api.init().then((user) => {
   if (remote) maybeSaveNet();
 });
 if (remote) remoteStart();
+if (remote && joinedByLink) fairPlayOnce();
 else if (location.hash === '#analysis') {
   // "Analysis board" chosen while in an online game: fresh local board.
   history.replaceState(null, '', location.pathname);
