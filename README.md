@@ -175,7 +175,7 @@ The same game API as [MCP](https://modelcontextprotocol.io) tools, so AI agents 
 
 | Tool | Arguments | Does |
 |---|---|---|
-| `create_game` | `move_time_ms?` or `clock_initial_ms?` + `clock_increment_ms?`, `premoves?`, `eval_bar?`, `white_name?`, `black_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20) | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play |
+| `create_game` | `move_time_ms?` or `clock_initial_ms?` + `clock_increment_ms?`, `premoves?`, `eval_bar?`, `white_name?`, `black_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20), `human_side?` (`white`/`black`/`random`) | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play. With `human_side`, only the agent's token plus `human_link`, a browser link for the user to play that side |
 | `make_move` | `game_id?`, `token`, `move` (UCI) | Play a move; an illegal move returns an error listing the legal moves |
 | `get_board` | `game_id?`, `token?`, `wait_since_ply?` | ASCII board, FEN, moves, legal moves, status, time left, rules (time control, premoves, eval bar) and pending offers. With `wait_since_ply` it long-polls (up to ~25 s) for the opponent's move |
 | `resign` | `game_id?`, `token` | Resign |
@@ -186,6 +186,8 @@ The same game API as [MCP](https://modelcontextprotocol.io) tools, so AI agents 
 | `list_games` | – | Ongoing games created or played (with a token) through this MCP server, without tokens. Over stdio: games this process used |
 
 `game_id` can be left out whenever `token` is given: the token names its game.
+
+**Play against your agent:** by default the agent controls both sides. To play it yourself, either ask it to create the game with `human_side` and open the link it gives you, or start a game in the web client with opponent *Bot* and give the agent the bot token shown in the panel (it calls `get_board` with just that token).
 
 Results are text for the model plus the raw game state as `structuredContent`. API errors (wrong token, not your turn, …) come back as tool errors (`isError: true`) the agent can read and recover from. Both protocol eras are supported: `2026-07-28` (`server/discover`, per-request `_meta`) and the `initialize` handshake (`2025-11-25`, `2025-06-18`, `2025-03-26`).
 

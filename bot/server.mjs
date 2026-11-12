@@ -821,6 +821,18 @@ function siteLink(req, id) {
   return host ? `${host}/?game=${id}` : `?game=${id}`;
 }
 
+/**
+ * Absolute game link for MCP results, optionally with a play-as token in the fragment.
+ * Scheme: X-Forwarded-Proto when sent, else http for local/IP hosts and https for named hosts (usually behind TLS).
+ */
+function mcpLink(req) {
+  const first = (h) => (req.headers[h] || '').split(',')[0].trim();
+  const host = first('x-forwarded-host') || first('host');
+  const local = /^(localhost|127\.|\[::1\]|\d+\.\d+\.\d+\.\d+)(:|$)/.test(host);
+  const proto = first('x-forwarded-proto') || (local ? 'http' : 'https');
+  return (id, token) => `${host ? `${proto}://${host}` : ''}/?game=${id}${token ? `#token=${token}` : ''}`;
+}
+
 async function handleMcp(req, res) {
   if (!MCP_TOKEN) throw err(404, 'not_found', 'Unknown endpoint');
   // DNS-rebinding guard: browsers always send Origin; MCP clients normally don't.
@@ -856,7 +868,7 @@ async function handleMcp(req, res) {
   const session = { version: header ?? (bodyVersion === undefined ? '2025-03-26' : undefined) };
   const ac = new AbortController();
   res.on('close', () => ac.abort());
-  const reply = await mcpServer(mcpBackend(req, ac.signal)).handle(msg, session);
+  const reply = await mcpServer(mcpBackend(req, ac.signal), { link: mcpLink(req) }).handle(msg, session);
   if (!reply) {
     res.writeHead(202, { 'Cache-Control': 'no-store' });
     return res.end();

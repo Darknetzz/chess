@@ -19,6 +19,7 @@ Loop: get_board with your token tells you your side ("you"). If it is your turn,
 Otherwise call get_board with wait_since_ply = the current ply; it returns when the opponent moves (or after ~25 s unchanged).
 Time: nothing counts down until both sides are connected (aborted after 24 h if they never are). Then each side has first_move_ms (30 min) for its first move, else the game is aborted. After that, per-move games give every move move_time_ms; clock games ("clock" set) give each side initial_ms plus increment_ms per move. Running out loses on time. Stop when status is no longer "ongoing".
 Every tool that takes game_id also works with just your token. list_games shows ongoing games used through this server.
+To play against the user: create_game with human_side; you get only your own token plus a link for the user to play their side in the browser. Give them the link and never move for their side. If the user gives you a token (e.g. the bot token from a "Bot" game in the web client), call get_board with just that token and play only that side.
 Before both sides' first moves either side may abort; later, end a lost game with resign. Draws: draw offer/accept/decline (moving also declines). Takebacks: takeback request undoes your last move once the opponent accepts. Watch "offers" in get_board and answer offers made to you.`;
 
 export class RpcError extends Error {
@@ -47,7 +48,8 @@ export const TOOLS = [
     description:
       'Create a game from the standard position. Returns game_id and a secret token for every side not played by the server engine. ' +
       "Keep tokens private: a token is the only credential for its side. Time control: move_time_ms per move, " +
-      'or a chess clock with clock_initial_ms (+ clock_increment_ms). Timing starts once both sides have joined and made a first move (30 min each).',
+      'or a chess clock with clock_initial_ms (+ clock_increment_ms). Timing starts once both sides have joined and made a first move (30 min each). ' +
+      'With human_side you play only the other side: the result gives your token and a browser link for the user to play human_side.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -60,6 +62,9 @@ export const TOOLS = [
         black_name: str('Display name for black (max 40 chars)', { maxLength: 40 }),
         engine_side: str('Let the server play this side with Stockfish', { enum: ['white', 'black'] }),
         engine_level: int('Stockfish level 0-20 (default 5), only with engine_side', 0, 20),
+        human_side: str('The user plays this side in the browser; you get only the other side\'s token. Default: you control both sides. Not with engine_side', {
+          enum: ['white', 'black', 'random'],
+        }),
       },
       additionalProperties: false,
     },
@@ -193,6 +198,21 @@ async function callTool(backend, name, a = {}, link) {
       if (optStr(a.white_name, 'white_name')) opts.white = { name: a.white_name };
       if (optStr(a.black_name, 'black_name')) opts.black = { name: a.black_name };
       if (optStr(a.engine_side, 'engine_side')) opts.engine = { side: a.engine_side, level: optInt(a.engine_level, 'engine_level') ?? 5 };
+      if (optStr(a.human_side, 'human_side')) {
+        const human = choice('human_side', ['white', 'black', 'random']);
+        if (opts.engine) fail('"human_side" cannot be combined with "engine_side"');
+        const side = human === 'random' ? (Math.random() < 0.5 ? 'white' : 'black') : human;
+        const agent = side === 'white' ? 'black' : 'white';
+        const full = await backend.create(opts);
+        const { [`${side}_token`]: humanToken, ...s } = full;
+        Object.assign(s, { human_side: side, human_link: link(s.game_id, humanToken), agent_side: agent, token: s[`${agent}_token`] });
+        return {
+          s,
+          text:
+            `Created game ${s.game_id}. You play ${agent}; your token: ${s.token}\nKeep it secret; pass it to make_move/get_board.\n` +
+            `Give the user this link to play ${side} in the browser (it contains their token; do not move for ${side}):\n${s.human_link}\n\n${describe({ ...s, you: agent }, link)}`,
+        };
+      }
       const s = await backend.create(opts);
       const tokens = ['white', 'black'].filter((c) => s[`${c}_token`]).map((c) => `${c}_token: ${s[`${c}_token`]}`);
       return { s, text: `Created game ${s.game_id}.\n${tokens.join('\n')}\nKeep tokens secret; pass one to make_move/get_board.\n\n${describe(s, link)}` };
@@ -251,7 +271,7 @@ async function callTool(backend, name, a = {}, link) {
  * and stray responses. session.version holds the legacy version negotiated by initialize (stdio:
  * one per process; HTTP: from the MCP-Protocol-Version header).
  */
-export function mcpServer(backend, { name = 'chess-bot-api', version = '1.0.0', link = (id) => `/?game=${id}` } = {}) {
+export function mcpServer(backend, { name = 'chess-bot-api', version = '1.0.0', link = (id, token) => `/?game=${id}${token ? `#token=${token}` : ''}` } = {}) {
   const serverInfo = { name, title: 'Chess bot API', version };
   const meta = { 'io.modelcontextprotocol/serverInfo': serverInfo };
 

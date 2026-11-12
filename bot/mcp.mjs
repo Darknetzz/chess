@@ -54,7 +54,12 @@ const backend = {
   },
 };
 
-const mcp = mcpServer(backend, { link: (id) => new URL(`?game=${id}`, BASE).href });
+const link = (id, token) => {
+  const u = new URL(`?game=${id}`, BASE);
+  if (token) u.hash = `token=${token}`; // fragment: never reaches server logs
+  return u.href;
+};
+const mcp = mcpServer(backend, { link });
 const session = {};
 const write = (msg) => msg && process.stdout.write(`${JSON.stringify(msg)}\n`);
 
