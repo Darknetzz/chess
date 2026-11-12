@@ -23,8 +23,15 @@ export function initAccount({ onLogin, beforeLogout, onLogout }) {
   $('#login-btn').on('click', () => {
     $('#login-error').text('');
     $('#login-pass').val('');
-    $modal[0].showModal();
+    // Non-modal on purpose: password managers (Bitwarden) fight showModal() dialogs for the top layer
+    // and disable their inline menu. The backdrop is CSS and the page behind is made inert instead.
+    $modal[0].show();
+    $('main').prop('inert', true);
     $('#login-user').trigger('focus');
+  });
+  $modal.on('close', () => $('main').prop('inert', false));
+  $modal.on('keydown', (e) => {
+    if (e.key === 'Escape') $modal[0].close();
   });
   $('#login-close').on('click', () => $modal[0].close());
 
