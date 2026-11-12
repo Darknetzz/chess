@@ -1,8 +1,9 @@
-# Commit hash + date for the version line on the page (.git is only read in this stage).
+# Commit hash + date for the version line on the page. The context is bind-mounted, so a
+# missing .git (e.g. git-synced deploys) just yields {} and the page hides the line.
 FROM alpine/git:2.54.0 AS version
-WORKDIR /src
-COPY .git .git
-RUN git -c safe.directory='*' log -1 --format='{"commit":"%h","date":"%cs"}' > /version.json
+RUN --mount=type=bind,target=/src \
+    git -c safe.directory='*' -C /src log -1 --format='{"commit":"%h","date":"%cs"}' > /version.json 2>/dev/null \
+ || echo '{}' > /version.json
 
 FROM php:8.5.12-apache
 

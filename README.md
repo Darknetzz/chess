@@ -43,7 +43,7 @@ Open http://localhost:8080. `.env` options:
 - `CHESS_MCP_TOKEN` – bearer token for MCP over HTTP at `/mcp` (see [MCP](#mcp)). Empty (default) disables `/mcp` (404). Generate one with `openssl rand -base64 32`.
 - `CHESS_MCP_ALLOWED_ORIGINS` – comma-separated browser origins allowed to call `/mcp`. Requests with any other `Origin` header get 403 (DNS-rebinding guard); MCP clients normally send none.
 
-The Docker build writes `version.json` (commit hash + date), shown at the bottom of the side panel; other installs simply don't show it. The build reads `.git`, so build from a git checkout.
+The Docker build writes `version.json` (commit hash + date), shown at the bottom of the side panel; other installs simply don't show it. It's read from `.git` in the build context; without it the build still works and the line is just hidden.
 
 The SQLite DB lives in the `chess-data` volume (`/data/chess.sqlite`). Bot API games live in the `bot-data` volume (`/data/bot.sqlite`). Apache proxies `/api/games`, `/api/games/*` and `/mcp` to the `bot` container. Behind another reverse proxy (e.g. NPMplus) just forward the whole site; `https://<host>/mcp` then works, and set `CHESS_BOT_PROXY_HOPS=2`.
 
