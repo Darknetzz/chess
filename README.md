@@ -98,7 +98,7 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
   "status": "ongoing",          // ongoing | checkmate | stalemate | draw | resigned | timeout | aborted
   "result": "*",                // * | 1-0 | 0-1 | 1/2-1/2
   "winner": null,               // white | black | null
-  "reason": null,               // threefold | fifty_move | insufficient_material | white_resigned | black_timeout | white_no_first_move | …
+  "reason": null,               // threefold | fifty_move | insufficient_material | white_resigned | black_timeout | white_no_first_move | not_joined | …
   "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
   "turn": "black",
   "ply": 1,
@@ -108,7 +108,8 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
     "white": { "name": "MyBot", "engine": null, "connected": true },
     "black": { "name": "Stockfish (level 5)", "engine": { "level": 5 }, "connected": true }
   },
-  "move_time_ms": 30000,        // clock games: 1800000, the limit for each side's first move
+  "move_time_ms": 30000,        // per-move limit from ply 2 on (clock games: 1800000)
+  "first_move_ms": 1800000,     // limit for each side's first move, once both sides have joined
   "clock": null,                // clock games: { "initial_ms": 300000, "increment_ms": 3000 }
   "clocks": null,               // clock games: time left now, { "white": 297512, "black": 300000 }
   "premoves": true,             // the host allows premoves in the web client
@@ -116,13 +117,15 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
   "server_now": 1794420812000,  // server time of this response, to correct for client clock skew
   "created_at": 1794420808543,  // all times: Unix epoch milliseconds
   "last_move_at": 1794420810000,// null before the first move
+  "joined_at": 1794420809000,   // when both sides were first connected; null until then
   "deadline_at": 1794420840000  // when the side to move loses on time; null once the game is over
 }
 ```
 
 **Time control:**
-- *Per move* (default): every move must arrive within `move_time_ms`, which is 1 s to 24 h (default `BOT_MOVE_TIME_MS`). If it doesn't, the side to move loses with `status: "timeout"`. White's clock starts when the game is created, so start both bots promptly or pick a generous limit.
-- *Chess clock* (`clock`): each side has `initial_ms` in total and gets `increment_ms` back after each of its moves. The clocks start once both sides have made their first move. Each first move must arrive within `move_time_ms` (30 min), or the game ends with `status: "aborted"`, result `*`. After that, the side whose clock runs out loses with `status: "timeout"`. `deadline_at` is when the clock of the side to move runs out.
+- *Start* (all games): nothing counts down until both sides are connected (an engine side always is); if that doesn't happen within 24 h of creation, the game is aborted with reason `not_joined`. From then on, each side's first move must arrive within `first_move_ms` (30 min), or the game ends with `status: "aborted"`, result `*`.
+- *Per move* (default): from ply 2, every move must arrive within `move_time_ms`, which is 1 s to 24 h (default `BOT_MOVE_TIME_MS`). If it doesn't, the side to move loses with `status: "timeout"`.
+- *Chess clock* (`clock`): each side has `initial_ms` in total and gets `increment_ms` back after each of its moves. The clocks start once both sides have made their first move. After that, the side whose clock runs out loses with `status: "timeout"`. `deadline_at` is when the clock of the side to move runs out.
 - If the server restarts and a deadline passed while it was down, that side gets its time back (a fresh per-move limit, or the clock time it had at its last move) instead of losing.
 
 **Errors** come back as `{"error": "<code>", "message": "<text>"}`:

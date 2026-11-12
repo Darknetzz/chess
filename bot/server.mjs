@@ -18,7 +18,8 @@ const MAX_MOVE_MS = 86_400_000;
 const CLOCK_MIN_MS = 15_000;
 const CLOCK_MAX_MS = 10_800_000;
 const INCREMENT_MAX_MS = 180_000;
-const FIRST_MOVE_MS = 1_800_000; // clock games: limit for each side's first move (clocks start after both)
+const FIRST_MOVE_MS = 1_800_000; // limit for each side's first move, counted from when both sides have joined
+const JOIN_MS = 86_400_000; // games where both sides never connected are aborted this long after creation
 const DEFAULT_MOVE_MS = Math.min(MAX_MOVE_MS, Math.max(MIN_MOVE_MS, envInt('BOT_MOVE_TIME_MS', 30_000)));
 const CREATE_PER_HOUR = envInt('BOT_CREATE_PER_HOUR', 30);
 const PROXY_HOPS = Number.isInteger(+process.env.BOT_PROXY_HOPS) ? +process.env.BOT_PROXY_HOPS : 1;
@@ -99,13 +100,23 @@ if (db.prepare('PRAGMA user_version').get().user_version < 4) {
     COMMIT;
   `);
 }
+if (db.prepare('PRAGMA user_version').get().user_version < 5) {
+  // When both sides were first connected; no time counts down before that. Existing games count as joined.
+  db.exec(`
+    BEGIN;
+    ALTER TABLE games ADD COLUMN joined_at INTEGER;
+    UPDATE games SET joined_at = created_at;
+    PRAGMA user_version = 5;
+    COMMIT;
+  `);
+}
 const q = {
   insert: db.prepare(`INSERT INTO games (id, created_at, white_hash, black_hash, move_time_ms, deadline_at, white_name, black_name, engine_side, engine_level,
     clock_ms, increment_ms, white_ms, black_ms, premoves, eval_bar) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   get: db.prepare('SELECT * FROM games WHERE id = ?'),
   ongoing: db.prepare(`SELECT * FROM games WHERE status = 'ongoing'`),
-  save: db.prepare(`UPDATE games SET moves = ?, status = ?, result = ?, reason = ?, last_move_at = ?, deadline_at = ?, white_ms = ?, black_ms = ? WHERE id = ?`),
-  restart: db.prepare('UPDATE games SET deadline_at = ?, last_move_at = ? WHERE id = ?'),
+  save: db.prepare(`UPDATE games SET moves = ?, status = ?, result = ?, reason = ?, last_move_at = ?, deadline_at = ?, white_ms = ?, black_ms = ?, joined_at = ? WHERE id = ?`),
+  restart: db.prepare('UPDATE games SET deadline_at = ?, last_move_at = ?, joined_at = ? WHERE id = ?'),
   name: { w: db.prepare('UPDATE games SET white_name = ? WHERE id = ?'), b: db.prepare('UPDATE games SET black_name = ? WHERE id = ?') },
 };
 
@@ -133,6 +144,7 @@ function load(id) {
   if (row.status === 'ongoing') {
     live.set(id, g);
     schedule(g);
+    checkJoined(g);
     engineTurn(g);
   }
   return g;
@@ -145,7 +157,7 @@ function engineTurn(g, attempt = 0) {
   g.thinking = true;
   const ply = g.chess.history().length;
   // On a clock, think at most ~1/40 of the time left so the engine doesn't flag.
-  const left = isClock(r) ? (clockRunning(g) ? timeLeft(g, r.engine_side) : r.deadline_at - Date.now()) : null;
+  const left = clockRunning(g) ? timeLeft(g, r.engine_side) : null;
   engines
     .bestMove(g.chess.fen(), r.engine_level, left === null ? undefined : Math.max(50, Math.floor(left / 40)))
     .then((uci) => {
@@ -164,7 +176,7 @@ function engineTurn(g, attempt = 0) {
 
 function persist(g) {
   const r = g.row;
-  q.save.run(r.moves, r.status, r.result, r.reason, r.last_move_at, r.deadline_at, r.white_ms, r.black_ms, r.id);
+  q.save.run(r.moves, r.status, r.result, r.reason, r.last_move_at, r.deadline_at, r.white_ms, r.black_ms, r.joined_at, r.id);
 }
 
 function finish(g, status, result, reason) {
@@ -190,6 +202,9 @@ function outcome(chess) {
 const isClock = (r) => r.clock_ms != null;
 /** Clock games: both clocks run only once each side has made its first move. */
 const clockRunning = (g) => isClock(g.row) && g.row.status === 'ongoing' && g.chess.history().length >= 2;
+/** All games: each side's first move has its own limit (FIRST_MOVE_MS once both joined), whatever the time control. */
+const firstMovePhase = (g) => g.chess.history().length < 2;
+const firstDeadline = (r, now) => (r.joined_at == null ? r.created_at + JOIN_MS : now + FIRST_MOVE_MS);
 /** Clock time left for side c right now (ms), or null for per-move games. */
 function timeLeft(g, c, now = Date.now()) {
   const r = g.row;
@@ -207,7 +222,7 @@ function schedule(g) {
 function onDeadline(g) {
   if (g.row.status !== 'ongoing' || Date.now() < g.row.deadline_at) return schedule(g);
   const loser = g.chess.turn();
-  if (isClock(g.row) && g.chess.history().length < 2) finish(g, 'aborted', '*', `${SIDE[loser]}_no_first_move`);
+  if (firstMovePhase(g)) finish(g, 'aborted', '*', g.row.joined_at == null ? 'not_joined' : `${SIDE[loser]}_no_first_move`);
   else finish(g, 'timeout', loser === 'w' ? '0-1' : '1-0', `${SIDE[loser]}_timeout`);
   persist(g);
   wake(g);
@@ -228,10 +243,25 @@ const presenceSig = (g) => `${+connected(g, 'w')}${+connected(g, 'b')}`;
 /** Record activity by a side; wake waiters if someone's connected state changed. */
 function touch(g, side) {
   g.seen[side] = Date.now();
+  if (checkJoined(g)) return;
   if (g.row.status === 'ongoing' && presenceSig(g) !== g.presence) wake(g);
 }
+/** Latch joined_at once both sides are connected; that starts the first-move window. True if it just latched. */
+function checkJoined(g) {
+  const r = g.row;
+  if (r.joined_at != null || r.status !== 'ongoing' || !connected(g, 'w') || !connected(g, 'b')) return false;
+  const now = Date.now();
+  r.joined_at = now;
+  if (firstMovePhase(g)) {
+    r.deadline_at = now + FIRST_MOVE_MS;
+    schedule(g);
+  }
+  persist(g);
+  wake(g);
+  return true;
+}
 setInterval(() => {
-  for (const g of live.values()) if (presenceSig(g) !== g.presence) wake(g);
+  for (const g of live.values()) if (!checkJoined(g) && presenceSig(g) !== g.presence) wake(g);
 }, 5_000).unref();
 
 // ---------- views ----------
@@ -257,6 +287,7 @@ function state(g) {
       ]),
     ),
     move_time_ms: r.move_time_ms,
+    first_move_ms: FIRST_MOVE_MS,
     clock: isClock(r) ? { initial_ms: r.clock_ms, increment_ms: r.increment_ms } : null,
     clocks: isClock(r) ? { white: timeLeft(g, 'w'), black: timeLeft(g, 'b') } : null,
     premoves: r.premoves !== 0,
@@ -264,6 +295,7 @@ function state(g) {
     server_now: Date.now(),
     created_at: r.created_at,
     last_move_at: r.last_move_at,
+    joined_at: r.joined_at,
     deadline_at: r.deadline_at,
   };
 }
@@ -388,7 +420,7 @@ function create(body, req) {
   const now = Date.now();
   let id;
   do id = newId(); while (q.get.get(id));
-  q.insert.run(id, now, hash(tokens.white), hash(tokens.black), ms, now + ms, names.white, names.black, engine?.side ?? null, engine?.level ?? null,
+  q.insert.run(id, now, hash(tokens.white), hash(tokens.black), ms, now + JOIN_MS, names.white, names.black, engine?.side ?? null, engine?.level ?? null,
     clock?.initial ?? null, clock?.inc ?? null, clock?.initial ?? null, clock?.initial ?? null, body.premoves === false ? 0 : 1, body.eval_bar === true ? 1 : 0);
   const g = load(id);
   const out = { ...state(g) };
@@ -428,7 +460,7 @@ function applyMove(g, uci) {
   g.chess.move(fromUci(uci));
   r.moves = r.moves ? `${r.moves} ${uci}` : uci;
   r.last_move_at = now;
-  r.deadline_at = now + (clockRunning(g) ? r[`${SIDE[g.chess.turn()]}_ms`] : r.move_time_ms);
+  r.deadline_at = clockRunning(g) ? now + r[`${SIDE[g.chess.turn()]}_ms`] : firstMovePhase(g) ? firstDeadline(r, now) : now + r.move_time_ms;
   const end = outcome(g.chess);
   if (end) finish(g, ...end);
   else schedule(g);
@@ -477,7 +509,7 @@ function waitFor(g, since, side, signal, ms) {
   if (s.ply > since || s.status !== 'ongoing') return s;
   if (side) {
     g.open[side]++;
-    if (presenceSig(g) !== g.presence) wake(g); // tell the others before we start waiting ourselves
+    if (!checkJoined(g) && presenceSig(g) !== g.presence) wake(g); // tell the others before we start waiting ourselves
   }
   return new Promise((resolve) => {
     let closed = false;
@@ -622,9 +654,10 @@ for (const row of q.ongoing.all()) {
     // Clock games: the side to move keeps the time it had at its last move; first moves get a fresh limit.
     const ply = row.moves ? row.moves.split(' ').length : 0;
     const side = ply % 2 ? 'black' : 'white';
-    row.deadline_at = now + (row.clock_ms != null && ply >= 2 ? row[`${side}_ms`] : row.move_time_ms);
+    if (ply < 2) row.deadline_at = Math.max(firstDeadline(row, now), now + FIRST_MOVE_MS);
+    else row.deadline_at = now + (row.clock_ms != null ? row[`${side}_ms`] : row.move_time_ms);
     if (row.clock_ms != null && row.last_move_at !== null) row.last_move_at = now;
-    q.restart.run(row.deadline_at, row.last_move_at, row.id);
+    q.restart.run(row.deadline_at, row.last_move_at, row.joined_at, row.id);
   }
   load(row.id);
 }

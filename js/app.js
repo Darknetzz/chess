@@ -1249,7 +1249,7 @@ async function netEngineTurn() {
   let retry = false;
   try {
     // On a clock, think at most ~1/40 of the time left so Stockfish doesn't flag.
-    const left = s.clock ? (s.ply >= 2 ? clockLeft(s, s.turn[0]) : s.deadline_at - serverNow()) : null;
+    const left = s.clock && s.ply >= 2 ? clockLeft(s, s.turn[0]) : null;
     const cap = left === null ? undefined : Math.max(50, Math.floor(left / 40));
     const pause = left === null ? BOT_PAUSE_MS : Math.min(BOT_PAUSE_MS, cap);
     const [uci] = await Promise.all([engine.bestMove(s.fen, remote.engineLevel ?? 5, cap), sleep(pause)]);
@@ -1302,7 +1302,7 @@ const tcLabel = (c) => `${+(c.initial_ms / 60000).toFixed(2)}+${+(c.increment_ms
 
 function remoteEndText(s) {
   const who = s.reason?.startsWith('black') ? 'Black' : 'White';
-  if (s.status === 'aborted') return `aborted, ${who} made no first move`;
+  if (s.status === 'aborted') return s.reason === 'not_joined' ? 'aborted, the opponent never joined' : `aborted, ${who} made no first move`;
   if (s.status === 'resigned') return `${who} resigned`;
   if (s.status === 'timeout') return `${who} ran out of time`;
   return REASON_TEXT[s.reason] || s.status;
@@ -1318,7 +1318,7 @@ function remoteStatus() {
     const mine = remote.side && s.turn[0] === remote.side;
     const who = mine ? 'Your move' : remote.engineBusy ? 'Stockfish is thinking' : `${COLOR_NAME[s.turn[0]]} to move`;
     const left = fmtLeft(s.deadline_at - serverNow());
-    const time = !s.clock ? ` · ${left} left` : s.ply < 2 ? ` · first move within ${left}` : '';
+    const time = s.joined_at == null ? ' · waiting for the opponent to join' : s.ply < 2 ? ` · first move within ${left}` : !s.clock ? ` · ${left} left` : '';
     t = `${who}${s.in_check ? ' — check!' : ''}${time}`;
   } else if (s.status === 'aborted') {
     t = `Game ${remoteEndText(s)}`;

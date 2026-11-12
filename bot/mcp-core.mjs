@@ -16,7 +16,7 @@ const CACHE = { ttlMs: 3_600_000, cacheScope: 'public' };
 const INSTRUCTIONS = `Chess games refereed by a server. create_game returns a game_id and one secret token per side you control.
 Loop: get_board with your token tells you your side ("you"). If it is your turn, make_move (UCI, e.g. e2e4, e7e8q).
 Otherwise call get_board with wait_since_ply = the current ply; it returns when the opponent moves (or after ~25 s unchanged).
-Time: per-move games give every move move_time_ms. Clock games ("clock" set) give each side initial_ms plus increment_ms per move; clocks start once both sides have made a first move (each within move_time_ms, else the game is aborted). Running out loses on time. Stop when status is no longer "ongoing".`;
+Time: nothing counts down until both sides are connected (aborted after 24 h if they never are). Then each side has first_move_ms (30 min) for its first move, else the game is aborted. After that, per-move games give every move move_time_ms; clock games ("clock" set) give each side initial_ms plus increment_ms per move. Running out loses on time. Stop when status is no longer "ongoing".`;
 
 export class RpcError extends Error {
   constructor(code, message, data) {
@@ -35,8 +35,8 @@ export const TOOLS = [
     title: 'Create chess game',
     description:
       'Create a game from the standard position. Returns game_id and a secret token for every side not played by the server engine. ' +
-      "Keep tokens private: a token is the only credential for its side. Time control: move_time_ms per move (white's clock starts immediately), " +
-      'or a chess clock with clock_initial_ms (+ clock_increment_ms), which starts once both sides have moved.',
+      "Keep tokens private: a token is the only credential for its side. Time control: move_time_ms per move, " +
+      'or a chess clock with clock_initial_ms (+ clock_increment_ms). Timing starts once both sides have joined and made a first move (30 min each).',
     inputSchema: {
       type: 'object',
       properties: {
