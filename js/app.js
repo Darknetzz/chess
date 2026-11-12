@@ -565,9 +565,18 @@ function renderStatus() {
   const text = statusText();
   if ($('#status').text() !== text) $('#status').text(text); // unchanged text: don't re-announce (aria-live)
   const over = isOver() && !state.replay;
-  const r = remote?.server?.result;
-  const lost = over && !!remote?.side && (r === '1-0' || r === '0-1') && r !== (remote.side === 'w' ? '1-0' : '0-1');
-  $('#status').toggleClass('over', over).toggleClass('lost', lost).toggleClass('thinking', thinking);
+  $('#status').toggleClass('over', over).toggleClass('lost', over && playerLost()).toggleClass('thinking', thinking);
+}
+
+/** Whether the person at this screen lost the finished game (online side or local game vs the bot). */
+function playerLost() {
+  if (remote) {
+    const r = remote.server?.result;
+    return !!remote.side && (r === '1-0' || r === '0-1') && r !== (remote.side === 'w' ? '1-0' : '0-1');
+  }
+  if (!isBot()) return false;
+  if (state.resigned) return state.resigned === state.humanColor;
+  return game.isCheckmate() && game.turn() === state.humanColor;
 }
 
 function renderMoves() {
