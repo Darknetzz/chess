@@ -17,7 +17,7 @@ function me(?int $uid): array
 {
     $out = ['user' => null, 'registration' => registration_open()];
     if ($uid === null) return $out;
-    $st = db()->prepare('SELECT username, settings FROM users WHERE id = ?');
+    $st = db()->prepare('SELECT username, settings, api_key_hash IS NOT NULL AS has_key FROM users WHERE id = ?');
     $st->execute([$uid]);
     $row = $st->fetch();
     if (!$row) {
@@ -25,7 +25,7 @@ function me(?int $uid): array
         session_destroy();
         return $out;
     }
-    $out['user'] = ['username' => $row['username'], 'settings' => json_decode($row['settings'], true) ?: new stdClass()];
+    $out['user'] = ['username' => $row['username'], 'settings' => json_decode($row['settings'], true) ?: new stdClass(), 'apiKey' => (bool)$row['has_key']];
     return $out;
 }
 
@@ -94,6 +94,19 @@ switch ($action) {
         $_SESSION = [];
         session_destroy();
         setcookie(session_name(), '', ['expires' => time() - 3600, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax']);
+        respond(['ok' => true]);
+
+    // Read-only API key for the saved games (chess MCP: list_library_games, create_game library_game_id).
+    // Shown once; a new one replaces the old.
+    case 'apikey':
+        $uid = require_user();
+        $key = new_api_key();
+        db()->prepare('UPDATE users SET api_key_hash = ? WHERE id = ?')->execute([hash('sha256', $key), $uid]);
+        respond(['key' => $key]);
+
+    case 'apikey_revoke':
+        $uid = require_user();
+        db()->prepare('UPDATE users SET api_key_hash = NULL WHERE id = ?')->execute([$uid]);
         respond(['ok' => true]);
 
     default:

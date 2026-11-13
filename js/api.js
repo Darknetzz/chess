@@ -53,6 +53,8 @@ export const api = {
   },
 
   saveSettings: (s) => api.req('settings.php', { method: 'PUT', body: s }),
+  createApiKey: () => api.req('auth.php?a=apikey', { method: 'POST', body: {} }),
+  revokeApiKey: () => api.req('auth.php?a=apikey_revoke', { method: 'POST', body: {} }),
   listGames: (offset = 0, limit = 200) => api.req(`games.php?offset=${offset}&limit=${limit}`),
   getGame: (id) => api.req(`games.php?id=${encodeURIComponent(id)}`),
   createGame: (g) => api.req('games.php', { method: 'POST', body: g }),

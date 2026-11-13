@@ -57,7 +57,7 @@ function db(): PDO
     return $pdo;
 }
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 function migrate(PDO $pdo): void
 {
@@ -100,6 +100,12 @@ function migrate(PDO $pdo): void
     if ($version < 2) $pdo->exec(<<<SQL
         ALTER TABLE games ADD COLUMN assisted INTEGER NOT NULL DEFAULT 0;
         PRAGMA user_version = 2;
+        SQL);
+    // Read-only API key per user (sha256 of it), for the chess MCP server reading the user's saved games.
+    if ($version < 3) $pdo->exec(<<<SQL
+        ALTER TABLE users ADD COLUMN api_key_hash TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS users_api_key ON users(api_key_hash);
+        PRAGMA user_version = 3;
         SQL);
     $pdo->exec('COMMIT');
 }
@@ -151,6 +157,40 @@ function user_id(): ?int
 function require_user(): int
 {
     return user_id() ?? fail(401, 'Not logged in');
+}
+
+const API_KEY_RE = '/^ck_[A-Za-z0-9_-]{43}$/';
+
+/** API key sent as "X-Api-Key: ck_…" or "Authorization: Bearer ck_…", or null. */
+function api_key_header(): ?string
+{
+    $h = $_SERVER['HTTP_X_API_KEY'] ?? null;
+    if ($h === null) {
+        $auth = $_SERVER['HTTP_AUTHORIZATION'] ?? (function_exists('getallheaders') ? (array_change_key_case(getallheaders())['authorization'] ?? '') : '');
+        if (preg_match('/^Bearer\s+(ck_\S+)$/i', $auth, $m)) $h = $m[1];
+    }
+    return $h === null ? null : trim($h);
+}
+
+/**
+ * User of a read-only API key (GET requests only; never a session), or null when no key was sent.
+ * A wrong key is a 401, not a fallback to the session.
+ */
+function api_key_user(): ?int
+{
+    $key = api_key_header();
+    if ($key === null) return null;
+    if (method() !== 'GET') fail(403, 'API keys are read-only');
+    if (!preg_match(API_KEY_RE, $key)) fail(401, 'Invalid API key');
+    $st = db()->prepare('SELECT id FROM users WHERE api_key_hash = ?');
+    $st->execute([hash('sha256', $key)]);
+    $id = $st->fetchColumn();
+    return $id === false ? fail(401, 'Invalid API key') : (int)$id;
+}
+
+function new_api_key(): string
+{
+    return 'ck_' . rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
 }
 
 function client_ip(): string

@@ -45,6 +45,7 @@
         <div class="account" id="account">
           <i data-icon="user"></i><span id="account-name" class="account-name"></span>
           <button type="button" id="login-btn" class="link" hidden><i data-icon="log-in"></i><span class="lbl">Log in</span></button>
+          <button type="button" id="apikey-btn" class="link" title="API key (lets the chess MCP read My games)" hidden><i data-icon="key-round"></i></button>
           <button type="button" id="logout-btn" class="link" hidden><i data-icon="log-out"></i><span class="lbl">Log out</span></button>
         </div>
       </div>
@@ -259,6 +260,19 @@
         <button type="button" id="login-close"><i data-icon="x"></i><span class="lbl">Cancel</span></button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="apikey-modal" class="apikey-dialog">
+    <h2><i data-icon="key-round"></i>API key</h2>
+    <p class="muted">Read-only access to <b>My games</b> for the chess MCP server (<code>list_library_games</code>, <code>create_game</code> with <code>library_game_id</code>). It can't change anything. Shown once; creating a new key replaces the old one.</p>
+    <p id="apikey-state"></p>
+    <div class="copy-row" id="apikey-row" hidden><input id="apikey-value" readonly><button type="button" data-copy="#apikey-value" title="Copy"><i data-icon="copy"></i></button></div>
+    <p id="apikey-error" class="modal-error"></p>
+    <div class="buttons three">
+      <button type="button" id="apikey-create"><i data-icon="key-round"></i><span class="lbl">Create key</span></button>
+      <button type="button" id="apikey-revoke"><i data-icon="x"></i><span class="lbl">Revoke</span></button>
+      <button type="button" id="apikey-close"><i data-icon="x"></i><span class="lbl">Close</span></button>
+    </div>
   </dialog>
 
   <dialog id="games-modal" class="wide-dialog">

@@ -6,9 +6,9 @@ import { randomBytes, randomInt, createHash, timingSafeEqual } from 'node:crypto
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Chess } from '../vendor/chess.js/chess.js';
+import { Chess, DEFAULT_POSITION, validateFen } from '../vendor/chess.js/chess.js';
 import { enginePool } from './engine.mjs';
-import { mcpServer, SUPPORTED, META_VERSION, E as RPC } from './mcp-core.mjs';
+import { mcpServer, libraryFetch, SUPPORTED, META_VERSION, E as RPC } from './mcp-core.mjs';
 
 const envInt = (k, d) => (Number.isInteger(+process.env[k]) && +process.env[k] > 0 ? +process.env[k] : d);
 const PORT = envInt('PORT', 3000);
@@ -24,7 +24,10 @@ const DEFAULT_MOVE_MS = Math.min(MAX_MOVE_MS, Math.max(MIN_MOVE_MS, envInt('BOT_
 const CREATE_PER_HOUR = envInt('BOT_CREATE_PER_HOUR', 30);
 const PROXY_HOPS = Number.isInteger(+process.env.BOT_PROXY_HOPS) ? +process.env.BOT_PROXY_HOPS : 1;
 const WAIT_MS = envInt('BOT_WAIT_MS', 30_000);
-const MAX_BODY = 4096;
+const MAX_BODY = 65_536; // room for a PGN to start from
+const PGN_MAX = 60_000;
+const START_MOVES_MAX = 1_000;
+const SOURCE_MAX = 80;
 const UCI_RE = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 const ID_RE = /^[A-Za-z0-9]{10}$/;
 const B62 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -134,9 +137,19 @@ if (db.prepare('PRAGMA user_version').get().user_version < 7) {
     COMMIT;
   `);
 }
+if (db.prepare('PRAGMA user_version').get().user_version < 8) {
+  // Games may start from a custom position: start_fen NULL = standard start; source = where it came from (shown to players).
+  db.exec(`
+    BEGIN;
+    ALTER TABLE games ADD COLUMN start_fen TEXT;
+    ALTER TABLE games ADD COLUMN source TEXT;
+    PRAGMA user_version = 8;
+    COMMIT;
+  `);
+}
 const q = {
   insert: db.prepare(`INSERT INTO games (id, created_at, white_hash, black_hash, move_time_ms, deadline_at, white_name, black_name, engine_side, engine_level,
-    clock_ms, increment_ms, white_ms, black_ms, premoves, eval_bar, analysis, agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+    clock_ms, increment_ms, white_ms, black_ms, premoves, eval_bar, analysis, agent, start_fen, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   get: db.prepare('SELECT * FROM games WHERE id = ?'),
   ongoing: db.prepare(`SELECT * FROM games WHERE status = 'ongoing'`),
   save: db.prepare(`UPDATE games SET moves = ?, status = ?, result = ?, reason = ?, last_move_at = ?, deadline_at = ?, white_ms = ?, black_ms = ?, joined_at = ?,
@@ -144,7 +157,10 @@ const q = {
   byHash: db.prepare('SELECT id FROM games WHERE white_hash = ? OR black_hash = ? LIMIT 1'),
   setAnalysis: db.prepare('UPDATE games SET analysis = ? WHERE id = ?'),
   markMcp: db.prepare('UPDATE games SET mcp = 1 WHERE id = ? AND mcp = 0'),
-  mcpOngoing: db.prepare(`SELECT id FROM games WHERE status = 'ongoing' AND mcp = 1 ORDER BY created_at DESC LIMIT 50`),
+  // Game history for MCP list_games: status 'ongoing' | 'over' | 'all'; player = case-insensitive name substring ('' = MCP games only).
+  history: db.prepare(`SELECT id FROM games WHERE (:status = 'all' OR (:status = 'ongoing') = (status = 'ongoing'))
+    AND (CASE WHEN :player = '' THEN mcp = 1 ELSE instr(lower(white_name), lower(:player)) > 0 OR instr(lower(black_name), lower(:player)) > 0 END)
+    ORDER BY created_at DESC LIMIT :limit`),
   restart: db.prepare('UPDATE games SET deadline_at = ?, last_move_at = ?, joined_at = ? WHERE id = ?'),
   name: { w: db.prepare('UPDATE games SET white_name = ? WHERE id = ?'), b: db.prepare('UPDATE games SET black_name = ? WHERE id = ?') },
 };
@@ -156,7 +172,7 @@ const newId = () => Array.from({ length: 10 }, () => B62[randomInt(62)]).join(''
 const live = new Map();
 
 function replay(row) {
-  const chess = new Chess();
+  const chess = new Chess(row.start_fen || DEFAULT_POSITION);
   for (const uci of row.moves ? row.moves.split(' ') : []) chess.move(fromUci(uci));
   return chess;
 }
@@ -375,6 +391,8 @@ function state(g) {
     winner,
     reason: r.reason,
     fen: g.chess.fen(),
+    start_fen: r.start_fen || DEFAULT_POSITION,
+    source: r.source || null,
     turn: SIDE[g.chess.turn()],
     ply: history.length,
     moves: history.map((m) => ({ san: m.san, uci: m.lan })),
@@ -482,6 +500,97 @@ function needOngoing(g) {
   if (g.row.status !== 'ongoing') throw err(409, 'game_over', `Game is over (${g.row.status}, ${g.row.result})`);
 }
 
+// ---------- custom start positions ----------
+const CASTLE = { K: ['e1', 'h1', 'w'], Q: ['e1', 'a1', 'w'], k: ['e8', 'h8', 'b'], q: ['e8', 'a8', 'b'] };
+
+/** Checked, normalised FEN: castling rights the pieces can't back up are dropped; the side not to move must not be in check. */
+function cleanFen(fen) {
+  if (typeof fen !== 'string' || fen.length > 100) throw err(400, 'invalid_fen', '"fen" must be a FEN string');
+  const v = validateFen(fen.trim().replace(/\s+/g, ' '));
+  if (!v.ok) throw err(400, 'invalid_fen', v.error);
+  const c = new Chess(fen.trim().replace(/\s+/g, ' '));
+  const at = (sq, type, color) => {
+    const p = c.get(sq);
+    return p && p.type === type && p.color === color;
+  };
+  const parts = c.fen().split(' ');
+  parts[2] = [...parts[2]].filter((f) => CASTLE[f] && at(CASTLE[f][0], 'k', CASTLE[f][2]) && at(CASTLE[f][1], 'r', CASTLE[f][2])).join('') || '-';
+  const out = parts.join(' ');
+  const other = [...parts];
+  other[1] = parts[1] === 'w' ? 'b' : 'w';
+  other[3] = '-';
+  if (new Chess(other.join(' ')).isCheck()) throw err(400, 'invalid_fen', `Illegal position: ${SIDE[other[1]]} is in check but it is ${SIDE[parts[1]]}'s move`);
+  return out;
+}
+
+/**
+ * Start position of a new game, from at most one of:
+ *   fen (+ moves: UCI list played from it) | pgn (mainline; [FEN] header honoured) | from_game (id of an earlier game here)
+ * plus ply: how many of those moves to play before the new game starts (default: all).
+ * Returns { fen, source } with fen null for the standard start. The new game's move list starts empty.
+ */
+function startPosition(body) {
+  const given = ['fen', 'pgn', 'from_game'].filter((k) => body[k] != null);
+  if (given.length > 1) throw err(400, 'invalid_start', `Give only one of "fen", "pgn", "from_game" (got ${given.join(', ')})`);
+  if (body.moves != null && !given.includes('fen') && given.length) throw err(400, 'invalid_start', '"moves" goes with "fen" (or alone, from the standard start)');
+  if (body.ply != null && !Number.isInteger(body.ply)) throw err(400, 'invalid_ply', '"ply" must be a non-negative integer');
+  if (body.source != null && (typeof body.source !== 'string' || body.source.length > SOURCE_MAX)) throw err(400, 'invalid_source', `"source" must be a string up to ${SOURCE_MAX} chars`);
+  let base = DEFAULT_POSITION;
+  let moves = [];
+  let source = null;
+  if (body.from_game != null) {
+    const id = body.from_game;
+    const row = typeof id === 'string' && ID_RE.test(id) ? q.get.get(id) : null;
+    if (!row) throw err(404, 'not_found', `No game with id "${id}" to start from`);
+    base = row.start_fen || DEFAULT_POSITION;
+    moves = row.moves ? row.moves.split(' ') : [];
+    source = `game ${row.id}`;
+  } else if (body.pgn != null) {
+    if (typeof body.pgn !== 'string' || !body.pgn.trim() || body.pgn.length > PGN_MAX) throw err(400, 'invalid_pgn', `"pgn" must be a PGN string up to ${PGN_MAX} chars`);
+    const c = new Chess();
+    try {
+      c.loadPgn(body.pgn.replace(/\r\n?/g, '\n').replace(/^\uFEFF/, ''));
+    } catch (e) {
+      throw err(400, 'invalid_pgn', `PGN not readable: ${e.message}`);
+    }
+    const h = c.history({ verbose: true });
+    base = h.length ? h[0].before : c.fen();
+    moves = h.map((m) => m.lan);
+    const tags = c.getHeaders();
+    const who = [tags.White, tags.Black].every((n) => n && n !== '?') ? `${tags.White} vs ${tags.Black}` : '';
+    source = who ? `PGN (${who})` : 'PGN';
+  } else {
+    if (body.fen != null) {
+      base = cleanFen(body.fen);
+      source = 'FEN';
+    }
+    if (body.moves != null) {
+      if (!Array.isArray(body.moves) || body.moves.length > START_MOVES_MAX || !body.moves.every((m) => typeof m === 'string' && UCI_RE.test(m.trim().toLowerCase()))) {
+        throw err(400, 'invalid_moves', `"moves" must be a list of up to ${START_MOVES_MAX} UCI moves`);
+      }
+      moves = body.moves.map((m) => m.trim().toLowerCase());
+      source ||= 'moves';
+    }
+  }
+  const ply = body.ply ?? moves.length;
+  if (ply < 0 || ply > moves.length) throw err(400, 'invalid_ply', `"ply" must be between 0 and ${moves.length}`);
+  const c = new Chess(base);
+  for (let i = 0; i < ply; i++) {
+    try {
+      c.move(fromUci(moves[i]));
+    } catch {
+      throw err(422, 'illegal_move', `Move ${i + 1} (${moves[i]}) is not legal in that position`);
+    }
+  }
+  const fen = base === DEFAULT_POSITION && ply === 0 ? DEFAULT_POSITION : cleanFen(c.fen());
+  const end = outcome(new Chess(fen));
+  if (end) throw err(409, 'start_is_over', `That position is already decided (${[end[0], end[2]].filter(Boolean).join(', ').replace(/_/g, ' ')})`);
+  if (fen === DEFAULT_POSITION) return { fen: null, source: null };
+  if (body.source) source = cleanName(body.source) || source;
+  else if (ply !== moves.length) source += ` after ply ${ply}`;
+  return { fen, source };
+}
+
 function create(body, req) {
   let clock = null;
   if (body.clock != null) {
@@ -519,13 +628,15 @@ function create(body, req) {
   if (body.eval_bar != null && typeof body.eval_bar !== 'boolean') throw err(400, 'invalid_eval_bar', '"eval_bar" must be true or false');
   if (body.analysis != null && typeof body.analysis !== 'boolean') throw err(400, 'invalid_analysis', '"analysis" must be true or false');
   if (body.agent != null && typeof body.agent !== 'boolean') throw err(400, 'invalid_agent', '"agent" must be true or false');
+  const start = startPosition(body);
   rateLimit(clientIp(req));
   const tokens = { white: randomBytes(32).toString('base64url'), black: randomBytes(32).toString('base64url') };
   const now = Date.now();
   let id;
   do id = newId(); while (q.get.get(id));
   q.insert.run(id, now, hash(tokens.white), hash(tokens.black), ms, now + JOIN_MS, names.white, names.black, engine?.side ?? null, engine?.level ?? null,
-    clock?.initial ?? null, clock?.inc ?? null, clock?.initial ?? null, clock?.initial ?? null, body.premoves === false ? 0 : 1, body.eval_bar === true ? 1 : 0, body.analysis === true ? 1 : 0, body.agent === true ? 1 : 0);
+    clock?.initial ?? null, clock?.inc ?? null, clock?.initial ?? null, clock?.initial ?? null, body.premoves === false ? 0 : 1, body.eval_bar === true ? 1 : 0, body.analysis === true ? 1 : 0, body.agent === true ? 1 : 0,
+    start.fen, start.source);
   const g = load(id);
   const out = { ...state(g) };
   // The server plays the engine side, so its token is never handed out.
@@ -680,8 +791,7 @@ function takeback(g, body) {
 /** PGN of the game so far (finished or ongoing). */
 function pgn(g, site) {
   const r = g.row;
-  const c = new Chess();
-  for (const uci of r.moves ? r.moves.split(' ') : []) c.move(fromUci(uci));
+  const c = replay(r); // a custom start adds the SetUp/FEN tags
   const d = new Date(r.created_at);
   const date = `${d.getUTCFullYear()}.${String(d.getUTCMonth() + 1).padStart(2, '0')}.${String(d.getUTCDate()).padStart(2, '0')}`;
   const term = r.status === 'ongoing' ? 'unterminated' : r.status === 'timeout' ? 'time forfeit' : r.status === 'aborted' ? 'abandoned'
@@ -695,6 +805,7 @@ function pgn(g, site) {
     ['Result', r.result],
     ['TimeControl', isClock(r) ? `${r.clock_ms / 1000}+${r.increment_ms / 1000}` : '-'],
     ['Termination', term],
+    ...(r.source ? [['Origin', r.source]] : []),
   ];
   for (const [k, v] of headers) c.setHeader(k, v);
   return `${c.pgn()}\n`;
@@ -776,7 +887,11 @@ function waitFor(g, since, side, signal, ms) {
 const MCP_TOKEN = process.env.MCP_TOKEN || '';
 const MCP_ORIGINS = new Set((process.env.MCP_ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean));
 const MCP_WAIT_MS = Math.min(WAIT_MS, 25_000); // stay under common proxy read timeouts
-const MCP_MAX_BODY = 16_384;
+const MCP_MAX_BODY = 80_000; // create_game may carry a PGN
+// Web app (PHP) the library tools read from with a user's API key; in Docker the "chess" service.
+const LIBRARY_API_URL = process.env.LIBRARY_API_URL || 'http://chess';
+// Optional default library key for /mcp (it is already owner-only behind MCP_TOKEN), so agents needn't be given one.
+const MCP_LIBRARY_KEY = process.env.MCP_LIBRARY_KEY || '';
 const digest = (s) => createHash('sha256').update(s).digest();
 const withYou = (s, side) => (side ? { ...s, you: SIDE[side] } : s);
 const rpcError = (id, code, message, data) => ({ jsonrpc: '2.0', id, error: { code, message, ...(data ? { data } : {}) } });
@@ -830,7 +945,10 @@ function mcpBackend(req, signal) {
       return pgn(g, siteLink(req, g.row.id));
     },
     lookup: (token) => findByToken(token),
-    list: () => q.mcpOngoing.all().map(({ id }) => load(id)).filter(Boolean).map(state),
+    list: ({ status = 'ongoing', player = '', limit = 50 } = {}) =>
+      q.history.all({ status, player, limit }).map(({ id }) => load(id)).filter(Boolean).map(state),
+    library: (key, query) => libraryFetch(LIBRARY_API_URL, key, query),
+    libraryKey: MCP_LIBRARY_KEY || undefined,
   };
 }
 

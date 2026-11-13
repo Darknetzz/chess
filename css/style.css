@@ -374,6 +374,8 @@ dialog.fairplay p { margin: 0 0 10px; }
 #gameover-modal h2 { font-size: 22px; color: var(--accent); }
 #gameover-modal.lost h2, #gameover-modal.lost h2 > .icon { color: #b33a3a; }
 dialog.wide-dialog { width: min(760px, 94vw); }
+dialog.apikey-dialog { width: min(460px, 92vw); }
+dialog.apikey-dialog p { margin: 0 0 8px; font-size: 13px; }
 dialog .group { margin-bottom: 8px; }
 
 /* Settings */

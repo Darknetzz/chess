@@ -1,11 +1,12 @@
 // Shared MCP layer for the bot API: tool definitions, JSON-RPC dispatch and result text.
 // Transports (bot/mcp.mjs over stdio, POST /mcp in bot/server.mjs) supply a backend:
 //   create(opts) / get(id, token) / wait(id, since, token) / move(id, token, uci) / resign(id, token) / abort(id, token)
-//   draw(id, token, action) / takeback(id, token, action) / rules(id, token, analysis) / pgn(id, token) -> text / lookup(token) -> id / list() -> states
+//   draw(id, token, action) / takeback(id, token, action) / rules(id, token, analysis) / pgn(id, token) -> text / lookup(token) -> id
+//   list({ status, player, limit }) -> states / library(key, { id } | { limit, offset }) -> web-app game record(s); libraryKey: default key or undefined
 // Each returns the API game state or throws { status, code, message, extra } (the API error shape).
 // Speaks both protocol eras: 2026-07-28 (server/discover + per-request _meta) and the older
 // initialize handshake (2025-11-25 and earlier).
-import { Chess } from '../vendor/chess.js/chess.js';
+import { Chess, DEFAULT_POSITION } from '../vendor/chess.js/chess.js';
 
 export const MODERN = '2026-07-28';
 const LEGACY = ['2025-11-25', '2025-06-18', '2025-03-26'];
@@ -20,6 +21,7 @@ Otherwise call get_board with wait_since_ply = the current ply; it returns when 
 Time: nothing counts down until both sides are connected (aborted after 24 h if they never are). Then each side has first_move_ms (30 min) for its first move, else the game is aborted. After that, per-move games give every move move_time_ms; clock games ("clock" set) give each side initial_ms plus increment_ms per move. Running out loses on time. Stop when status is no longer "ongoing".
 Every tool that takes game_id also works with just your token. list_games shows ongoing games used through this server.
 To play against the user: create_game with human_side; you get only your own token plus a link for the user to play their side in the browser. Give them the link and never move for their side. If the user gives you a token (e.g. the bot token from a "Bot" game in the web client), call get_board with just that token and play only that side.
+Custom start: create_game takes one of fen, pgn, from_game_id (an earlier game here; find them with list_games status/player) or library_game_id (the user's saved games in the web app; find them with list_library_games), plus ply to start after that many of its moves (default: its final position). The new game's move list starts empty at that position.
 Before both sides' first moves either side may abort; later, end a lost game with resign. Draws: draw offer/accept/decline (moving also declines). Takebacks: takeback request undoes your last move once the opponent accepts. set_analysis turns Stockfish analysis for the web client on/off mid-game (games created through MCP only). Watch "offers" in get_board and answer offers made to you.`;
 
 export class RpcError extends Error {
@@ -46,7 +48,7 @@ export const TOOLS = [
     name: 'create_game',
     title: 'Create chess game',
     description:
-      'Create a game from the standard position. Returns game_id and a secret token for every side not played by the server engine. ' +
+      'Create a game, from the standard position or a custom one (fen, pgn, from_game_id or library_game_id; ply picks the moment). Returns game_id and a secret token for every side not played by the server engine. ' +
       "Keep tokens private: a token is the only credential for its side. Time control: move_time_ms per move, " +
       'or a chess clock with clock_initial_ms (+ clock_increment_ms). Timing starts once both sides have joined and made a first move (30 min each). ' +
       'With human_side you play only the other side: the result gives your token and a browser link for the user to play human_side.',
@@ -66,6 +68,12 @@ export const TOOLS = [
         human_side: str('The user plays this side in the browser; you get only the other side\'s token. Default: you control both sides. Not with engine_side', {
           enum: ['white', 'black', 'random'],
         }),
+        fen: str('Start from this FEN (side to move, castling and en passant are taken from it). Only one of fen / pgn / from_game_id / library_game_id', { maxLength: 100 }),
+        pgn: str('Start from a PGN game (mainline; a [FEN] tag is honoured): its final position, or the one after "ply" moves', { maxLength: 60000 }),
+        from_game_id: str('Start from an earlier game on this server (finished or not): its final position, or the one after "ply" moves', { pattern: '^[A-Za-z0-9]{10}$' }),
+        library_game_id: int('Start from a game saved in the user\'s web-app library (ids from list_library_games)', 1),
+        library_key: str('API key of the user\'s web-app account (Account → API key). Only with library_game_id; optional when the server has a default'),
+        ply: int('With pgn / from_game_id / library_game_id: start after this many plies (half-moves) of that game. Default: all of them', 0),
       },
       additionalProperties: false,
     },
@@ -124,9 +132,36 @@ export const TOOLS = [
   },
   {
     name: 'list_games',
-    title: 'List active games',
-    description: 'Ongoing games created or played through this MCP server: id, players, ply, side to move, clocks and offers. Tokens are not shown.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    title: 'List games',
+    description:
+      'Games on this server: id, players, ply, side to move or result. Default: ongoing games created or played through MCP. ' +
+      'With player: any game (also web-client games) where a player name contains that text, e.g. to find a player\'s previous games to start from. Tokens are not shown.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: str('ongoing (default), over or all', { enum: ['ongoing', 'over', 'all'] }),
+        player: str('Case-insensitive part of a player name; searches every game, not only MCP ones', { maxLength: 40 }),
+        limit: int('Max games (1-50, default 20)', 1, 50),
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: 'list_library_games',
+    title: 'List saved games',
+    description:
+      "Games saved in the user's web-app account (My games): id, date, players, result, length. Use an id as create_game library_game_id. " +
+      'Needs the account\'s API key (Account → API key in the web app) unless the server has a default.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        library_key: str('API key of the web-app account; optional when the server has a default'),
+        limit: int('Max games (1-100, default 20), newest first', 1, 100),
+        offset: int('Skip this many games', 0),
+      },
+      additionalProperties: false,
+    },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
 ];
@@ -138,12 +173,74 @@ const optStr = (v, k) => (v === undefined || typeof v === 'string' ? v : fail(`"
 const optInt = (v, k) => (v === undefined || Number.isInteger(v) ? v : fail(`"${k}" must be an integer`));
 const reqStr = (v, k) => (typeof v === 'string' && v ? v : fail(`"${k}" is required`));
 
+const KEY_RE = /^ck_[A-Za-z0-9_-]{20,100}$/;
+
+/**
+ * Read the user's saved games from the web app (PHP, api/games.php) with an account API key.
+ * query: { id } for one game, else { limit, offset }. Throws the API error shape.
+ */
+export async function libraryFetch(base, key, query = {}) {
+  if (typeof key !== 'string' || !KEY_RE.test(key)) {
+    throw { status: 400, code: 'invalid_library_key', message: 'A web-app API key is required ("ck_…", from Account → API key in the web app)' };
+  }
+  const root = new URL(base);
+  if (!root.pathname.endsWith('/')) root.pathname += '/';
+  const u = new URL('api/games.php', root);
+  if (query.id != null) u.searchParams.set('id', String(query.id));
+  else {
+    u.searchParams.set('limit', String(query.limit ?? 20));
+    u.searchParams.set('offset', String(query.offset ?? 0));
+  }
+  let r;
+  try {
+    r = await fetch(u, { headers: { 'X-Api-Key': key, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
+  } catch (e) {
+    throw { status: 0, code: 'library_unreachable', message: `Game library unreachable at ${u.origin} (${e.cause?.code || e.message})` };
+  }
+  const data = await r.json().catch(() => null);
+  if (!r.ok || !data) {
+    const code = r.status === 401 ? 'invalid_library_key' : r.status === 404 ? 'not_found' : 'library_error';
+    throw { status: r.status, code, message: data?.error || `Game library answered HTTP ${r.status}` };
+  }
+  return data;
+}
+
+/** create_game start options (fen / pgn / from_game / library game, + ply) into the REST body fields. */
+async function startOpts(a, backend, opts) {
+  const sources = ['fen', 'pgn', 'from_game_id', 'library_game_id'].filter((k) => a[k] !== undefined);
+  if (sources.length > 1) fail(`Give only one of fen, pgn, from_game_id, library_game_id (got ${sources.join(', ')})`);
+  if (optInt(a.ply, 'ply') !== undefined && !['pgn', 'from_game_id', 'library_game_id'].includes(sources[0])) fail('"ply" needs pgn, from_game_id or library_game_id');
+  if (a.library_key !== undefined && sources[0] !== 'library_game_id') fail('"library_key" only goes with library_game_id');
+  if (a.ply !== undefined) opts.ply = a.ply;
+  if (optStr(a.fen, 'fen') !== undefined) opts.fen = a.fen;
+  if (optStr(a.pgn, 'pgn') !== undefined) opts.pgn = a.pgn;
+  if (optStr(a.from_game_id, 'from_game_id') !== undefined) opts.from_game = a.from_game_id;
+  if (optInt(a.library_game_id, 'library_game_id') !== undefined) {
+    const rec = await backend.library(optStr(a.library_key, 'library_key') || backend.libraryKey, { id: a.library_game_id });
+    const moves = Array.isArray(rec.moves) ? rec.moves : [];
+    if (a.ply !== undefined && a.ply > moves.length) fail(`"ply" must be between 0 and ${moves.length} for library game ${rec.id}`);
+    const who = rec.white && rec.black ? ` (${rec.white} vs ${rec.black})` : '';
+    Object.assign(opts, {
+      fen: rec.startFen,
+      moves,
+      source: `library game #${rec.id}${who}${a.ply !== undefined && a.ply < moves.length ? ` after ply ${a.ply}` : ''}`.slice(0, 80),
+    });
+  }
+}
+
 /** "5+3" style label: minutes + increment seconds. */
 const tc = (c) => `${+(c.initial_ms / 60000).toFixed(2)}+${+(c.increment_ms / 1000).toFixed(1)}`;
 
-function moveList(moves) {
+function moveList(moves, startFen) {
+  const [, turn = 'w', , , , full = '1'] = (startFen || '').split(' ');
+  const first = parseInt(full, 10) || 1;
+  const off = turn === 'b' ? 1 : 0; // black moves first: numbering starts with "N..."
   const out = [];
-  moves.forEach((m, i) => out.push(i % 2 ? m.san : `${i / 2 + 1}. ${m.san}`));
+  moves.forEach((m, i) => {
+    const k = i + off;
+    const n = first + Math.floor(k / 2);
+    out.push(k % 2 ? (i === 0 ? `${n}... ${m.san}` : m.san) : `${n}. ${m.san}`);
+  });
   return out.join(' ') || '(none)';
 }
 
@@ -160,7 +257,9 @@ export function describe(s, link) {
     lines.push(`Game ${s.game_id} is over: ${s.status} ${s.result}${s.reason ? ` (${s.reason})` : ''}${s.winner ? `, ${s.winner} wins` : ''}${who}.`);
   }
   const chess = new Chess(s.fen);
-  lines.push('', chess.ascii(), `FEN: ${s.fen}`, `Moves: ${moveList(s.moves)}`);
+  lines.push('', chess.ascii(), `FEN: ${s.fen}`);
+  if (s.source || (s.start_fen && s.start_fen !== DEFAULT_POSITION)) lines.push(`Started from ${s.source || 'a custom position'}: ${s.start_fen}`);
+  lines.push(`Moves: ${moveList(s.moves, s.start_fen)}`);
   if (s.status === 'ongoing') lines.push(`Legal moves (UCI): ${chess.moves({ verbose: true }).map((m) => m.lan).join(' ')}`);
   const p = s.players || {};
   const name = (c) => `${p[c]?.name || c}${p[c]?.connected ? '' : ' (not connected)'}`;
@@ -206,6 +305,7 @@ async function callTool(backend, name, a = {}, link) {
       if (optStr(a.white_name, 'white_name')) opts.white = { name: a.white_name };
       if (optStr(a.black_name, 'black_name')) opts.black = { name: a.black_name };
       if (optStr(a.engine_side, 'engine_side')) opts.engine = { side: a.engine_side, level: optInt(a.engine_level, 'engine_level') ?? 5 };
+      await startOpts(a, backend, opts);
       if (optStr(a.human_side, 'human_side')) {
         const human = choice('human_side', ['white', 'black', 'random']);
         if (opts.engine) fail('"human_side" cannot be combined with "engine_side"');
@@ -267,15 +367,40 @@ ${describe(s, link)}` };
       return { s: { pgn: text }, text };
     }
     case 'list_games': {
-      const games = await backend.list();
+      const status = a.status === undefined ? 'ongoing' : choice('status', ['ongoing', 'over', 'all']);
+      const player = (optStr(a.player, 'player') || '').trim();
+      const limit = optInt(a.limit, 'limit') ?? 20;
+      if (limit < 1 || limit > 50) fail('"limit" must be 1-50');
+      const games = await backend.list({ status, player, limit });
+      const date = (ms) => new Date(ms).toISOString().slice(0, 10);
       const row = (g) => {
         const p = g.players || {};
+        const head = `- ${g.game_id} (${date(g.created_at)}): ${p.white?.name || 'White'} vs ${p.black?.name || 'Black'}, ${g.ply} plies`;
+        const from = g.source ? `, from ${g.source}` : '';
+        if (g.status !== 'ongoing') return `${head}, ${g.status} ${g.result}${g.reason ? ` (${g.reason.replace(/_/g, ' ')})` : ''}${from}`;
         const clocks = g.clocks ? `, clocks ${Math.round(g.clocks.white / 1000)}s / ${Math.round(g.clocks.black / 1000)}s` : '';
         const offers = [g.offers?.draw && `draw offered by ${g.offers.draw}`, g.offers?.takeback && `takeback asked by ${g.offers.takeback}`].filter(Boolean);
-        return `- ${g.game_id}: ${p.white?.name || 'White'} vs ${p.black?.name || 'Black'}, ply ${g.ply}, ${g.turn} to move${clocks}${offers.length ? `; ${offers.join(', ')}` : ''}`;
+        return `${head}, ${g.turn} to move${clocks}${from}${offers.length ? `; ${offers.join(', ')}` : ''}`;
       };
-      const text = games.length ? `${games.length} ongoing game(s):\n${games.map(row).join('\n')}` : 'No ongoing games.';
+      const what = `${status === 'all' ? '' : `${status} `}game(s)${player ? ` with a player named like "${player}"` : ''}`;
+      const text = games.length ? `${games.length} ${what}:\n${games.map(row).join('\n')}` : `No ${what}.`;
       return { s: { games }, text };
+    }
+    case 'list_library_games': {
+      const limit = optInt(a.limit, 'limit') ?? 20;
+      const offset = optInt(a.offset, 'offset') ?? 0;
+      if (limit < 1 || limit > 100 || offset < 0) fail('"limit" must be 1-100 and "offset" >= 0');
+      const data = await backend.library(optStr(a.library_key, 'library_key') || backend.libraryKey, { limit, offset });
+      const games = (data.games || []).map((g) => ({
+        id: g.id, date: g.createdAt ? new Date(g.createdAt * 1000).toISOString().slice(0, 10) : null, white: g.white || null, black: g.black || null,
+        result: g.result, plies: g.moves?.length ?? 0, title: g.title || null, mode: g.mode, termination: g.termination || null,
+        custom_start: g.startFen !== DEFAULT_POSITION,
+      }));
+      const row = (g) => `- #${g.id} (${g.date ?? '?'}): ${g.white || '?'} vs ${g.black || '?'}, ${g.result}, ${g.plies} plies, ${g.mode}${g.title ? ` · ${g.title}` : ''}${g.custom_start ? ' · custom start' : ''}`;
+      const text = games.length
+        ? `${games.length} of ${data.total} saved game(s)${offset ? ` from #${offset + 1}` : ''}:\n${games.map(row).join('\n')}`
+        : data.total ? `No saved games past offset ${offset} (total ${data.total}).` : 'No saved games in this account.';
+      return { s: { games, total: data.total }, text };
     }
     default:
       throw new RpcError(E.params, `Unknown tool: ${name}`);

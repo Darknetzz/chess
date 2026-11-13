@@ -43,6 +43,8 @@ Open http://localhost:8080. `.env` options (all listed with defaults in `.env.ex
 - `CHESS_BOT_ENGINE_MAX_PROCS` / `CHESS_BOT_ENGINE_MAX_DEPTH` / `CHESS_BOT_ENGINE_MAX_MS` – caps for server-side Stockfish in headless games: parallel engine processes (default 2, each single-threaded with a 16 MB hash), search depth (30) and time per move (2000 ms; the real limit at high levels)
 - `CHESS_MCP_TOKEN` – bearer token for MCP over HTTP at `/mcp` (see [MCP](#mcp)). Empty (default) disables `/mcp` (404). Generate one with `openssl rand -base64 32`.
 - `CHESS_MCP_ALLOWED_ORIGINS` – comma-separated browser origins allowed to call `/mcp`. Requests with any other `Origin` header get 403 (DNS-rebinding guard); MCP clients normally send none.
+- `CHESS_MCP_LIBRARY_KEY` – optional default web-app API key for the MCP library tools (`list_library_games`, `create_game` `library_game_id`), so agents needn't be handed one. `/mcp` is already owner-only behind `CHESS_MCP_TOKEN`.
+- `CHESS_LIBRARY_API_URL` – where the bot service reaches the web app for those tools (default `http://chess`, the `chess` service).
 
 The Docker build writes `version.json` (commit hash + date), shown at the bottom of the side panel; other installs simply don't show it. It's read from `.git` in the build context; without it the build still works and the line is just hidden.
 
@@ -54,23 +56,23 @@ Copy `index.html`, `.htaccess`, `api/`, `css/`, `js/`, `img/`, `vendor/` into th
 - Needs **PHP 8.5** with `pdo_sqlite` for `api/*.php`. Set `DATA_DIR` to a writable directory **outside** the docroot (default: `data/` next to `api/`, protected by `.htaccess`).
 - **Apache 2.4**: `.htaccess` sets the WASM MIME type, compression, caching and blocks `data/` (needs `AllowOverride FileInfo Indexes AuthConfig Limit`; `mod_headers`/`mod_deflate` optional).
 - **nginx**: see `nginx.conf` (php-fpm `fastcgi_pass`, `/data` denied, `/api/games` proxied to the bot service). Stock `mime.types` already maps `.wasm`.
-- **Bot API** (optional): run `node bot/server.mjs` with Node ≥ 26 and `vendor/` next to `bot/`. Env: `PORT` (3000), `DATA_DIR`, `BOT_MOVE_TIME_MS`, `BOT_CREATE_PER_HOUR`, `BOT_PROXY_HOPS`, `BOT_WAIT_MS` (long-poll, 30000), `MCP_TOKEN`, `MCP_ALLOWED_ORIGINS`. Proxy `^/api/games(/|$)` and `/mcp` to it with a read timeout above 30 s. On Apache use `bot/apache.conf`, which needs `mod_proxy_http`.
+- **Bot API** (optional): run `node bot/server.mjs` with Node ≥ 26 and `vendor/` next to `bot/`. Env: `PORT` (3000), `DATA_DIR`, `BOT_MOVE_TIME_MS`, `BOT_CREATE_PER_HOUR`, `BOT_PROXY_HOPS`, `BOT_WAIT_MS` (long-poll, 30000), `MCP_TOKEN`, `MCP_ALLOWED_ORIGINS`, `MCP_LIBRARY_KEY`, `LIBRARY_API_URL` (the web app's site root as the bot reaches it, e.g. `http://127.0.0.1`). Proxy `^/api/games(/|$)` and `/mcp` to it with a read timeout above 30 s. On Apache use `bot/apache.conf`, which needs `mod_proxy_http`.
 - Without PHP the app still works as before in guest mode: games and settings stay in `localStorage`, login is hidden.
 
 Serve over HTTPS in production (the session cookie is marked `Secure` automatically when it is). Must be served over HTTP(S) — `file://` blocks ES modules and workers.
 
 ## API
 JSON, session cookie, `X-Requested-With: chess` header required on writes.
-- `api/auth.php` – `GET ?a=me`, `POST ?a=register|login|logout` (`{username, password}`; 10 failed logins / 15 min per IP+user)
+- `api/auth.php` – `GET ?a=me`, `POST ?a=register|login|logout` (`{username, password}`; 10 failed logins / 15 min per IP+user), `POST ?a=apikey` (new read-only API key, returned once as `{key}`; replaces the old one), `POST ?a=apikey_revoke`
 - `api/settings.php` – `GET`, `PUT`
-- `api/games.php` – `GET` (list, `offset`/`limit`), `GET ?id=`, `POST`, `PUT ?id=`, `DELETE ?id=`, `POST ?a=import` (`{games: [...]}`, ≤500)
+- `api/games.php` – `GET` (list, `offset`/`limit`), `GET ?id=`, `POST`, `PUT ?id=`, `DELETE ?id=`, `POST ?a=import` (`{games: [...]}`, ≤500). The `GET`s also accept the account's API key (`X-Api-Key: ck_…` or `Authorization: Bearer ck_…`) instead of the session; a key on any other method is `403`. Create the key in the web app under the key button next to your name.
 
 ## Bot API
-Refereed games for external bots, or a bot against a human. The server holds the game and validates every move with chess.js; clients never decide what is legal. All requests and responses are JSON. Games always start from the standard position.
+Refereed games for external bots, or a bot against a human. The server holds the game and validates every move with chess.js; clients never decide what is legal. All requests and responses are JSON. Games start from the standard position unless created with a custom start (see *Custom start*).
 
 | Endpoint | Body | Purpose |
 |---|---|---|
-| `POST /api/games` | `{move_time_ms? \| clock?, white?, black?, engine?, premoves?, eval_bar?, analysis?, agent?}` | Create a game. Returns `201` with the game state plus `white_token` and `black_token` |
+| `POST /api/games` | `{move_time_ms? \| clock?, white?, black?, engine?, premoves?, eval_bar?, analysis?, agent?, fen? \| pgn? \| from_game?, moves?, ply?, source?}` | Create a game. Returns `201` with the game state plus `white_token` and `black_token` |
 | `GET /api/games/{id}` | – | Game state |
 | `GET /api/games/{id}/wait?since=<ply>` | – | Long-poll: answers as soon as `ply != since` (a takeback lowers it), the game ends, an offer changes or a player connects/disconnects. Otherwise it answers after 30 s with the unchanged state |
 | `GET /api/games/by-token` | – | Game state of the game the `Authorization: Bearer <token>` belongs to, plus `you` |
@@ -100,6 +102,12 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
   -d '{"move_time_ms": 10000, "white": {"name": "MyBot"}, "engine": {"side": "black", "level": 5}}'
 ```
 
+**Custom start:** give at most one of `fen` (a FEN; `moves`, a list of UCI moves, may follow it), `pgn` (a PGN game, mainline; a `[FEN]` tag is honoured) or `from_game` (the id of any earlier game on this server, finished or not). `ply` picks how many of those moves are played before the new game begins (default: all, i.e. the final position). The new game starts at that position with an empty move list, so `ply`, takebacks, first-move limits and abort count from there. The FEN is checked (kings, pawns on edge ranks, en passant, the side not to move may not be in check); castling rights the pieces can't back up are dropped; a position that is already decided is refused (`409 start_is_over`). `source` (≤80 chars) overrides the label shown to players. The state then has `start_fen` and `source` (`null` for the standard start), the PGN gets `SetUp`/`FEN` tags plus an `Origin` tag, and the web client shows it in the online panel.
+```sh
+curl -s localhost:3000/api/games -H 'Content-Type: application/json' \
+  -d '{"pgn": "1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6", "ply": 10, "engine": {"side": "white", "level": 8}}'
+```
+
 **Presence:** `players.<side>.connected` is true while that side has an open `/wait` with its token, or has made a request in the last 40 s. A server engine side is always connected. A `/wait` also returns early, with the same ply, when either side connects or disconnects.
 
 **Game state:**
@@ -111,6 +119,8 @@ curl -s -X POST http://localhost:8080/api/games -H 'Content-Type: application/js
   "winner": null,               // white | black | null
   "reason": null,               // threefold | fifty_move | insufficient_material | white_resigned | black_timeout | white_no_first_move | black_aborted | agreement | not_joined | …
   "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+  "start_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", // position the game started from
+  "source": null,               // custom start: where it came from, e.g. "PGN (A vs B) after ply 10", "game R5NvvpsGKA"
   "turn": "black",
   "ply": 1,
   "moves": [{ "san": "e4", "uci": "e2e4" }],
@@ -179,7 +189,7 @@ The same game API as [MCP](https://modelcontextprotocol.io) tools, so AI agents 
 
 | Tool | Arguments | Does |
 |---|---|---|
-| `create_game` | `move_time_ms?` or `clock_initial_ms?` + `clock_increment_ms?`, `premoves?`, `eval_bar?`, `analysis?`, `white_name?`, `black_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20), `human_side?` (`white`/`black`/`random`) | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play. With `human_side`, only the agent's token plus `human_link`, a browser link for the user to play that side |
+| `create_game` | `move_time_ms?` or `clock_initial_ms?` + `clock_increment_ms?`, `premoves?`, `eval_bar?`, `analysis?`, `white_name?`, `black_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20), `human_side?` (`white`/`black`/`random`); start: one of `fen?`, `pgn?`, `from_game_id?`, `library_game_id?` (+ `library_key?`), plus `ply?` | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play. With `human_side`, only the agent's token plus `human_link`, a browser link for the user to play that side. The start options work as in *Custom start*; `library_game_id` starts from a game in the user's web-app library |
 | `make_move` | `game_id?`, `token`, `move` (UCI) | Play a move; an illegal move returns an error listing the legal moves |
 | `get_board` | `game_id?`, `token?`, `wait_since_ply?` | ASCII board, FEN, moves, legal moves, status, time left, rules (time control, premoves, eval bar) and pending offers. With `wait_since_ply` it long-polls (up to ~25 s) for the opponent's move |
 | `resign` | `game_id?`, `token` | Resign |
@@ -188,9 +198,12 @@ The same game API as [MCP](https://modelcontextprotocol.io) tools, so AI agents 
 | `takeback` | `game_id?`, `token`, `action` (`request`/`accept`/`decline`) | Takeback requests |
 | `set_analysis` | `game_id?`, `token`, `enabled` | Allow or forbid Stockfish analysis in the web client mid-game (games created through MCP only) |
 | `get_pgn` | `game_id?`, `token?` | PGN of the game, finished or ongoing |
-| `list_games` | – | Ongoing games created or played (with a token) through this MCP server, without tokens. Over stdio: games this process used |
+| `list_games` | `status?` (`ongoing`/`over`/`all`), `player?`, `limit?` | Games without tokens. Default: ongoing games created or played (with a token) through MCP. With `player`: every game on the server (web-client ones too) where a player name contains that text, e.g. someone's previous games to branch from. Over stdio: only games this process saw |
+| `list_library_games` | `library_key?`, `limit?`, `offset?` | The user's saved games in the web app (*My games*), newest first; ids for `create_game` `library_game_id` |
 
 `game_id` can be left out whenever `token` is given: the token names its game.
+
+**Saved games (library):** the web app and the bot service keep separate databases, so the library tools read *My games* through `api/games.php` with a read-only account API key: create it with the key button next to your name in the web app. Pass it as `library_key`, or set it as the server default (`CHESS_MCP_LIBRARY_KEY` for `/mcp`, `LIBRARY_KEY` for stdio). Over HTTP the bot service calls the web app at `CHESS_LIBRARY_API_URL`; over stdio at `BOT_API_URL`.
 
 **Play against your agent:** by default the agent controls both sides. To play it yourself, either ask it to create the game with `human_side` and open the link it gives you, or start a game in the web client with opponent *Bot* and give the agent the bot token shown in the panel (it calls `get_board` with just that token).
 

@@ -1282,7 +1282,7 @@ function renderNet() {
   $('#net-players').html(rows.join(''));
   if (s) {
     const time = s.clock ? `${tcLabel(s.clock)} clock` : `${fmtLeft(s.move_time_ms)} per move`;
-    $('#net-rules').text(`${time} · premoves ${s.premoves === false ? 'off' : 'allowed'} · eval bar ${s.eval_bar ? 'allowed' : 'off'}${remote.analysis || s.analysis ? ' · analysis allowed' : ''}`);
+    $('#net-rules').text(`${time} · premoves ${s.premoves === false ? 'off' : 'allowed'} · eval bar ${s.eval_bar ? 'allowed' : 'off'}${remote.analysis || s.analysis ? ' · analysis allowed' : ''}${s.source ? ` · started from ${s.source}` : ''}`);
   }
   const over = !!s && s.status !== 'ongoing';
   const other = remote.side ? COLOR_NAME[opposite(remote.side)] : '';
@@ -1421,7 +1421,7 @@ function maybeSaveNet() {
   const rec = {
     id: null,
     createdAt: Math.floor(s.created_at / 1000),
-    startFen: DEFAULT_POSITION,
+    startFen: s.start_fen || DEFAULT_POSITION,
     moves: s.moves.map((m) => m.uci),
     result: s.result,
     termination: remoteEndText(s).replace(/^./, (ch) => ch.toUpperCase()),
@@ -1500,7 +1500,8 @@ function applyServer(s) {
   }
   const local = state.history.map(toUci);
   const srv = s.moves.map((m) => m.uci);
-  const isPrefix = local.length <= srv.length && local.every((u, i) => u === srv[i]);
+  const start = s.start_fen || DEFAULT_POSITION; // games may start from a custom position
+  const isPrefix = state.startFen === start && local.length <= srv.length && local.every((u, i) => u === srv[i]);
   if (srv.length < local.length) {
     premoves = []; // takeback: queued moves no longer fit
     pendingMove = null;
@@ -1519,8 +1520,8 @@ function applyServer(s) {
     playMove(fromUci(srv.at(-1)));
   } else {
     pendingMove = null;
-    const g = new Chess(DEFAULT_POSITION);
-    state.startFen = DEFAULT_POSITION;
+    const g = new Chess(start);
+    state.startFen = start;
     state.history = srv.map((u) => {
       const r = g.move(fromUci(u));
       return { from: r.from, to: r.to, promotion: r.promotion, san: r.san };

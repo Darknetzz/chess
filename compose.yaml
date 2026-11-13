@@ -34,6 +34,9 @@ services:
       # MCP over HTTP at /mcp: bearer token (empty = /mcp disabled) and browser origins allowed to call it
       MCP_TOKEN: "${CHESS_MCP_TOKEN:-}"
       MCP_ALLOWED_ORIGINS: "${CHESS_MCP_ALLOWED_ORIGINS:-}"
+      # MCP library tools (the user's saved games in the web app): default API key, and where the web app is reached
+      MCP_LIBRARY_KEY: "${CHESS_MCP_LIBRARY_KEY:-}"
+      LIBRARY_API_URL: "${CHESS_LIBRARY_API_URL:-http://chess}"
     volumes:
       - bot-data:/data
     labels:

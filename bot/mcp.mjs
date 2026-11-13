@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// MCP server over stdio for the bot API: create_game, make_move, get_board, resign, abort, draw, takeback, set_analysis, get_pgn, list_games.
-// Calls the REST API at BOT_API_URL (default http://localhost:3000). No npm deps.
-//   {"command": "node", "args": ["bot/mcp.mjs"], "env": {"BOT_API_URL": "https://chess.example.com"}}
+// MCP server over stdio for the bot API: create_game, make_move, get_board, resign, abort, draw, takeback, set_analysis, get_pgn,
+// list_games, list_library_games. Calls the REST API at BOT_API_URL (default http://localhost:3000); the saved-games library is
+// api/games.php on the same site, read with a web-app API key (tool argument, or LIBRARY_KEY as the default). No npm deps.
+//   {"command": "node", "args": ["bot/mcp.mjs"], "env": {"BOT_API_URL": "https://chess.example.com", "LIBRARY_KEY": "ck_…"}}
 import { createInterface } from 'node:readline';
-import { mcpServer } from './mcp-core.mjs';
+import { mcpServer, libraryFetch } from './mcp-core.mjs';
 
 const BASE = new URL(process.env.BOT_API_URL || 'http://localhost:3000');
 if (!BASE.pathname.endsWith('/')) BASE.pathname += '/'; // site root; the API is at <root>api/games
@@ -29,7 +30,7 @@ async function api(path, { method = 'GET', body, token, text = false } = {}) {
 }
 
 const enc = encodeURIComponent;
-// Games this process created or used with a token, for list_games (the REST API has no listing).
+// Games this process created, used or saw, for list_games (the REST API has no listing).
 const used = new Set();
 const note = (s) => {
   if (s?.game_id) used.add(s.game_id);
@@ -48,11 +49,16 @@ const backend = {
   rules: (id, token, analysis) => post(id, 'rules', { token, analysis }),
   pgn: (id, token) => api(`/${enc(id)}/pgn`, { token, text: true }),
   lookup: async (token) => note(await api('/by-token', { token })).game_id,
-  list: async () => {
-    const games = await Promise.all([...used].map((id) => api(`/${enc(id)}`).catch(() => null)));
-    for (const s of games) if (s && s.status !== 'ongoing') used.delete(s.game_id);
-    return games.filter((s) => s?.status === 'ongoing');
+  list: async ({ status = 'ongoing', player = '', limit = 50 } = {}) => {
+    const games = (await Promise.all([...used].map((id) => api(`/${enc(id)}`).catch(() => null)))).filter(Boolean);
+    const named = (s) => !player || ['white', 'black'].some((c) => (s.players?.[c]?.name || '').toLowerCase().includes(player.toLowerCase()));
+    return games
+      .filter((s) => (status === 'all' || (status === 'ongoing') === (s.status === 'ongoing')) && named(s))
+      .sort((x, y) => y.created_at - x.created_at)
+      .slice(0, limit);
   },
+  library: (key, query) => libraryFetch(BASE, key, query),
+  libraryKey: process.env.LIBRARY_KEY || undefined,
 };
 
 const link = (id, token) => {

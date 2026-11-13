@@ -6,7 +6,8 @@ const MAX_IMPORT = 500;
 const MAX_MOVES = 1000;
 const LIST_FIELDS = 'id, created_at, updated_at, result, termination, mode, human_color, bot_level, white, black, title, start_fen, moves, assisted';
 
-$uid = require_user();
+// Reading also works with the account's API key (the chess MCP server); writing needs the session.
+$uid = api_key_user() ?? require_user();
 $pdo = db();
 $id = isset($_GET['id']) ? (int)$_GET['id'] : null;
 

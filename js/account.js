@@ -17,6 +17,7 @@ export function initAccount({ onLogin, beforeLogout, onLogout }) {
     $('#account-name').text(api.user ? api.user.username : 'Guest');
     $('#login-btn').prop('hidden', !api.available || !!api.user);
     $('#logout-btn').prop('hidden', !api.user);
+    $('#apikey-btn').prop('hidden', !api.user);
     $('#register-submit').prop('hidden', !api.registration);
   }
 
@@ -66,6 +67,50 @@ export function initAccount({ onLogin, beforeLogout, onLogout }) {
     api.user = null;
     render();
     onLogout();
+  });
+
+  // Read-only API key for the chess MCP (saved games). The plain key is only ever shown right after creating it.
+  const $key = $('#apikey-modal');
+  const keyState = () => {
+    const has = !!api.user?.apiKey;
+    $('#apikey-state').text(has ? 'A key is active.' : 'No key yet.');
+    $('#apikey-create .lbl').text(has ? 'Replace key' : 'Create key');
+    $('#apikey-revoke').prop('disabled', !has);
+  };
+  $('#apikey-btn').on('click', () => {
+    $('#apikey-error').text('');
+    $('#apikey-row').prop('hidden', true);
+    $('#apikey-value').val('');
+    keyState();
+    $key[0].showModal();
+  });
+  $('#apikey-close').on('click', () => $key[0].close());
+  $key.on('close', () => $('#apikey-value').val(''));
+  $('#apikey-create').on('click', async () => {
+    if (api.user?.apiKey && !window.confirm('Replace the key? The old one stops working.')) return;
+    try {
+      const { key } = await api.createApiKey();
+      api.user.apiKey = true;
+      keyState();
+      $('#apikey-state').text('New key — copy it now, it is not shown again:');
+      $('#apikey-value').val(key);
+      $('#apikey-row').prop('hidden', false);
+      $('#apikey-error').text('');
+    } catch (err) {
+      $('#apikey-error').text(err.message || String(err));
+    }
+  });
+  $('#apikey-revoke').on('click', async () => {
+    if (!window.confirm('Revoke the key? Anything using it loses access.')) return;
+    try {
+      await api.revokeApiKey();
+      api.user.apiKey = false;
+      $('#apikey-row').prop('hidden', true);
+      $('#apikey-value').val('');
+      keyState();
+    } catch (err) {
+      $('#apikey-error').text(err.message || String(err));
+    }
   });
 
   render();
