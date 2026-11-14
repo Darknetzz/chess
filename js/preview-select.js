@@ -36,11 +36,12 @@ export function enhanceSelect(select, renderPreview) {
   const options = () => [...list.querySelectorAll('[role=option]')];
 
   function render() {
+    btn.disabled = select.disabled;
     const cur = select.selectedOptions[0];
     btn.innerHTML = `<span class="pselect-preview">${renderPreview(select.value)}</span>`
       + `<span class="pselect-label">${cur ? cur.textContent : ''}</span><span class="pselect-chev" aria-hidden="true"></span>`;
     list.innerHTML = [...select.options].map((o, i) => (
-      `<div role="option" class="pselect-opt" id="${id}-${i}" data-value="${o.value}" aria-selected="${o.value === select.value}">`
+      `<div role="option" class="pselect-opt" id="${id}-${i}" data-value="${o.value}" aria-selected="${o.value === select.value}"${o.disabled ? ' aria-disabled="true"' : ''}>`
       + `<span class="pselect-preview">${renderPreview(o.value)}</span><span class="pselect-label">${o.textContent}</span></div>`
     )).join('');
   }
@@ -80,6 +81,7 @@ export function enhanceSelect(select, renderPreview) {
   }
 
   function pick(value) {
+    if ([...select.options].find((o) => o.value === value)?.disabled) return;
     close();
     if (value === select.value) return;
     select.value = value;

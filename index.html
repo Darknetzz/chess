@@ -103,8 +103,7 @@
         <button type="button" id="takeback-btn" title="Ask to take back your last move" hidden><i data-icon="undo-2"></i><span class="lbl">Takeback</span></button>
         <button type="button" id="flip" title="Flip board (F)"><i data-icon="arrow-up-down"></i><span class="lbl">Flip board</span></button>
         <button type="button" id="coords" title="Cycle coordinates (C)"><i data-icon="grid-3x3"></i><span class="lbl">Coordinates</span></button>
-        <button type="button" id="analysis-btn" title="Stockfish analysis: best move + evaluation (A)" aria-pressed="false"><i data-icon="cpu"></i><span class="lbl">Analysis</span></button>
-        <button type="button" id="evalbar-btn" title="Evaluation bar: winning chances, no best move (E)" aria-pressed="false"><i data-icon="chart-column"></i><span class="lbl">Eval bar</span></button>
+        <label class="engine-mode wide" title="Eval bar: winning chances (E) · Full analysis: best move + evaluation (A)"><span class="ttl"><i data-icon="microscope"></i>Stockfish</span><select id="engine-mode"></select></label>
       </div>
 
       <div class="nav">
@@ -126,7 +125,7 @@
         <button type="button" id="settings-btn" class="wide" title="Settings (S)"><i data-icon="settings"></i><span class="lbl">Settings</span></button>
       </div>
 
-      <p class="hint-text"><i data-icon="keyboard"></i> Keys: <kbd>F</kbd> flip · <kbd>C</kbd> coords · <kbd>A</kbd> analysis · <kbd>E</kbd> eval bar · <kbd>N</kbd> new · <kbd>←</kbd>/<kbd>→</kbd> undo/redo · <kbd>G</kbd> games · <kbd>S</kbd> settings</p>
+      <p class="hint-text"><i data-icon="keyboard"></i> Keys: <kbd>F</kbd> flip · <kbd>C</kbd> coords · <kbd>A</kbd> full analysis · <kbd>E</kbd> eval bar · <kbd>N</kbd> new · <kbd>←</kbd>/<kbd>→</kbd> undo/redo · <kbd>G</kbd> games · <kbd>S</kbd> settings</p>
       <p class="version" id="version" hidden></p>
     </aside>
   </main>
@@ -181,8 +180,8 @@
         </div>
         <p class="ng-online ng-clock-note muted">Clocks start once both sides have made their first move; a side that doesn't make its first move in time aborts the game.</p>
         <label class="ng-online check"><input type="checkbox" id="ng-premoves"> Allow premoves (queue moves during the opponent's turn)</label>
-        <label class="ng-online check"><input type="checkbox" id="ng-analysis"> Allow Stockfish analysis during the game (best move + evaluation, toggle with A; marks the game as assisted)</label>
-        <label class="check"><input type="checkbox" id="ng-evalbar"> <span><span id="ng-evalbar-verb">Show</span> evaluation bar (winning chances; marks the game as assisted)</span></label>
+        <label class="engine-mode"><span class="ttl" id="ng-engine-ttl">Stockfish help</span><select id="ng-engine"></select></label>
+        <p class="muted">Eval bar: winning chances. Full analysis: best move + evaluation. Either marks the game as assisted.</p>
         <label class="ng-online ng-move"><span class="ttl"><i data-icon="hourglass"></i>Time per move (running out loses)</span>
           <select id="ng-time">
             <option value="30000">30 seconds</option>
@@ -342,7 +341,7 @@
         <label class="check"><input type="checkbox" name="autoQueen"> Always promote to queen</label>
         <label class="check"><input type="checkbox" name="confirmActions"> Confirm new game / resign</label>
         <label class="check"><input type="checkbox" name="confirmMove"> Confirm moves in online games</label>
-        <label class="check"><input type="checkbox" name="analysis"> Stockfish analysis (best move + evaluation; marks live games as assisted)</label>
+        <label class="engine-mode" title="Marks live games as assisted">Stockfish <select id="settings-engine"></select></label>
         <label>Appearance
           <select name="uiTheme">
             <option value="system">System</option>

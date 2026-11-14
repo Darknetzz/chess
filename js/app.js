@@ -13,6 +13,7 @@ import { initLibrary } from './library.js';
 import { hydrateIcons, setButton, icon } from './icons.js';
 import { remoteFromUrl, botApi, netStore, gameLink } from './botgame.js';
 import { premoveDests, applyPremoves } from './premove.js';
+import { engineModeSelect, modeOf } from './engine-mode.js';
 
 hydrateIcons();
 
@@ -46,6 +47,9 @@ const state = {
   replay: null, // { rec, live: snapshot of the live game }
 };
 let game = new Chess();
+// Stockfish help dropdowns: toolbar + Settings show the current mode, the New game dialog picks the game's rule.
+const engineSelects = ['#engine-mode', '#settings-engine'].map((sel) => engineModeSelect($(sel)[0], (m) => setEngineMode(m)));
+const ngEngine = engineModeSelect($('#ng-engine')[0], () => {});
 let thinking = false;
 let thinkToken = 0;
 let engineError = null;
@@ -741,8 +745,9 @@ const fullAnalysis = () => state.settings.analysis && analysisAllowed();
 function refreshAnalysis() {
   const full = fullAnalysis();
   const on = full || (state.evalBar && evalAllowed());
-  $('#analysis-btn').attr('aria-pressed', String(full)).prop('disabled', !analysisAllowed());
-  $('#evalbar-btn').attr('aria-pressed', String(on)).prop('disabled', full || !evalAllowed());
+  const mode = full ? 'full' : on ? 'bar' : 'off';
+  const allowed = ['off', ...(evalAllowed() ? ['bar'] : []), ...(analysisAllowed() ? ['full'] : [])];
+  engineSelects.forEach((sel) => sel.set(mode, allowed));
   $('#eval-bar, #analysis-info').prop('hidden', !on);
   if (!on) {
     if (analysisKey !== null) analyzer.terminate();
@@ -972,6 +977,16 @@ function toggleAnalysis() {
   changeSettings({ analysis: !state.settings.analysis });
 }
 
+/** Pick the toolbar/settings mode: full analysis is a global setting, the bar belongs to the game. */
+function setEngineMode(mode) {
+  if (mode !== 'full') {
+    state.evalBar = mode === 'bar';
+    persist();
+  }
+  if (state.settings.analysis !== (mode === 'full')) changeSettings({ analysis: mode === 'full' });
+  else refreshAnalysis();
+}
+
 function toggleEvalBar() {
   if (fullAnalysis() || !evalAllowed()) return;
   state.evalBar = !state.evalBar;
@@ -990,8 +1005,7 @@ function askNewGame() {
   $('#ng-clock-inc').val(state.settings.clockIncrement);
   $('#ng-time').val(String(state.settings.moveTimeMs));
   $('#ng-premoves').prop('checked', state.settings.premoves);
-  $('#ng-evalbar').prop('checked', state.settings.evalBar);
-  $('#ng-analysis').prop('checked', state.settings.allowAnalysis);
+  ngEngine.set(modeOf(state.settings.allowAnalysis, state.settings.evalBar));
   $('#ng-undo').prop('checked', state.settings.freeUndo);
   $('#ng-name').val(myName());
   syncNewGameForm();
@@ -1006,7 +1020,7 @@ function syncNewGameForm() {
   const online = !ngLocal(opp);
   $('#newgame-form .ng-online').prop('hidden', !online);
   $('#newgame-form .ng-side').prop('hidden', opp === 'analysis');
-  $('#ng-evalbar-verb').text(online ? 'Allow the' : 'Show');
+  $('#ng-engine-ttl').text(online ? 'Stockfish help allowed' : 'Stockfish help');
   $('#newgame-form .ng-stockfish').prop('hidden', opp !== 'stockfish');
   const tc = String($('#ng-tc').val());
   $('#newgame-form .ng-custom').prop('hidden', !online || tc !== 'custom');
@@ -1031,14 +1045,15 @@ async function startFromDialog() {
   const level = Number($('#ng-level').val());
   const tc = dialogTimeControl();
   const allowPremoves = $('#ng-premoves').prop('checked');
-  const evalBar = $('#ng-evalbar').prop('checked');
-  const allowAnalysis = $('#ng-analysis').prop('checked');
+  const engineMode = ngEngine.value;
+  const evalBar = engineMode !== 'off';
+  const allowAnalysis = engineMode === 'full';
   const name = String($('#ng-name').val()).trim();
   const local = ngLocal(opp);
   changeSettings({
-    side: sideSel, level, evalBar,
+    side: sideSel, level, evalBar, allowAnalysis, analysis: allowAnalysis,
     ...(opp === 'stockfish' ? { freeUndo: local } : {}),
-    ...(local ? {} : { ...tc.patch, premoves: allowPremoves, playerName: name, allowAnalysis }),
+    ...(local ? {} : { ...tc.patch, premoves: allowPremoves, playerName: name }),
   });
   if (local) {
     $('#newgame-modal')[0].close();
@@ -1119,8 +1134,6 @@ $('#net-offers').on('click', 'button[data-offer]', function () {
 });
 $('#flip').on('click', flip);
 $('#coords').on('click', cycleCoords);
-$('#analysis-btn').on('click', toggleAnalysis);
-$('#evalbar-btn').on('click', toggleEvalBar);
 $('#undo').on('click', undo);
 $('#redo').on('click', redo);
 $('#first').on('click', () => goTo(0));
