@@ -51,11 +51,12 @@ export class Engine {
   }
 
   _onBestmove(line) {
-    this.searching = false;
+    // A stale reply belongs to a stopped search: the current one (if any) is still running.
     if (this.staleBestmoves > 0) {
       this.staleBestmoves--;
       return;
     }
+    this.searching = false;
     const move = line.split(/\s+/)[1];
     const p = this.pending;
     this.pending = null;
@@ -177,8 +178,10 @@ export class Analyzer {
   }
 
   _onBestmove() {
-    this.searching = false;
+    // A stale reply belongs to a stopped search: the current one is still running and must stay
+    // stoppable, or its output would be taken for the next position's.
     if (this.staleBestmoves > 0) this.staleBestmoves--;
+    else this.searching = false;
   }
 
   async analyze(fen, onUpdate) {
