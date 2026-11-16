@@ -748,7 +748,7 @@ function refreshAnalysis() {
   const mode = full ? 'full' : on ? 'bar' : 'off';
   const allowed = ['off', ...(evalAllowed() ? ['bar'] : []), ...(analysisAllowed() ? ['full'] : [])];
   engineSelects.forEach((sel) => sel.set(mode, allowed));
-  $('#eval-bar, #analysis-info').prop('hidden', !on);
+  $('#eval-bar, #analysis-info, #analysis-progress').prop('hidden', !on);
   if (!on) {
     if (analysisKey !== null) analyzer.terminate();
     analysisKey = null;
@@ -777,6 +777,10 @@ function refreshAnalysis() {
           if (analysisKey !== key) return;
           lastEval = { info, result: null, fen };
           board.setArrows(fullAnalysis() ? [fromUci(info.best)] : []);
+          renderEval();
+        }, () => {
+          if (analysisKey !== key) return;
+          lastEval.done = true;
           renderEval();
         })
         .catch((err) => {
@@ -836,6 +840,11 @@ function renderEval() {
   $('#eval-text').text(text).toggleClass('bottom', atBottom).toggleClass('top', !atBottom)
     .toggleClass('on-light', whiteAhead).toggleClass('on-dark', !whiteAhead);
   $('#analysis-info').text(line);
+  // Search progress: depth reached of the analyzer's target depth; fades out once the search finishes.
+  const done = !!result || lastEval.done === true;
+  const depthPct = done ? 100 : info ? Math.min(100, (info.depth / analyzer.depth) * 100) : 0;
+  $('#analysis-progress').toggleClass('done', done).attr('title', done ? 'Search complete' : `Search depth ${info?.depth ?? 0}/${analyzer.depth}`)
+    .find('.analysis-progress-fill').css('width', `${depthPct}%`);
 }
 
 // ---- Settings ----------------------------------------------------------------

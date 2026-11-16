@@ -484,6 +484,10 @@ button[hidden] { display: none; }
 .eval-text.on-dark { color: #f4f4f4; }
 .eval-text.on-light { color: #333; }
 .analysis-info { margin: -4px 0 8px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.analysis-progress { height: 3px; margin: -4px 0 10px; border-radius: 2px; background: color-mix(in srgb, var(--muted) 20%, transparent); overflow: hidden; transition: opacity 0.6s ease; }
+.analysis-progress[hidden] { display: none; }
+.analysis-progress.done { opacity: 0; }
+.analysis-progress-fill { height: 100%; width: 0; background: var(--muted); transition: width 0.3s ease; }
 
 @media (max-width: 700px) {
   :root { --board-size: calc(100vw - 32px); }

@@ -181,12 +181,23 @@ export class Analyzer {
     // A stale reply belongs to a stopped search: the current one is still running and must stay
     // stoppable, or its output would be taken for the next position's.
     if (this.staleBestmoves > 0) this.staleBestmoves--;
-    else this.searching = false;
+    else {
+      this.searching = false;
+      const job = this.job;
+      if (!job) return;
+      if (this.frame) { // deliver the final update first, so it can't land after onDone
+        cancelAnimationFrame(this.frame);
+        this.frame = 0;
+        if (job.latest) job.onUpdate(job.latest);
+      }
+      job.onDone?.();
+    }
   }
 
-  async analyze(fen, onUpdate) {
+  /** onDone (optional) fires when the search reaches its target depth. */
+  async analyze(fen, onUpdate, onDone) {
     this.stop();
-    const job = { fen, white: fen.split(' ')[1] === 'w', onUpdate, latest: null };
+    const job = { fen, white: fen.split(' ')[1] === 'w', onUpdate, onDone, latest: null };
     this.job = job;
     await this.init();
     if (this.job !== job) return; // superseded while the worker was loading
