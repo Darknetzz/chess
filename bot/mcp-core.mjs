@@ -63,6 +63,8 @@ export const TOOLS = [
         analysis: { type: 'boolean', description: 'Allow players to use full Stockfish analysis (best move + line) in the web client. Default false' },
         white_name: str('Display name for white (max 40 chars)', { maxLength: 40 }),
         black_name: str('Display name for black (max 40 chars)', { maxLength: 40 }),
+        human_name: str("Display name for the user's side (human_side) or the side not played by the server engine (engine_side); applied once a random side is drawn. Max 40 chars", { maxLength: 40 }),
+        engine_name: str("Display name for your side (with human_side) or the server engine's side (with engine_side); applied once a random side is drawn. Max 40 chars", { maxLength: 40 }),
         engine_side: str('Let the server play this side with Stockfish', { enum: ['white', 'black'] }),
         engine_level: int('Stockfish level 0-20 (default 5), only with engine_side', 0, 20),
         human_side: str('The user plays this side in the browser; you get only the other side\'s token. Default: you control both sides. Not with engine_side', {
@@ -283,6 +285,14 @@ async function callTool(backend, name, a = {}, link) {
   // game_id may be left out when a token is given: the token names its game.
   const gameId = async (token) => optStr(a.game_id, 'game_id') || (token ? backend.lookup(token) : fail('"game_id" or "token" is required'));
   const choice = (k, allowed) => (allowed.includes(a[k]) ? a[k] : fail(`"${k}" must be one of: ${allowed.join(', ')}`));
+  // human_name / engine_name land on a colour only once the sides are known (human_side may be random).
+  const sideNames = (opts, human, engine) => {
+    for (const [k, c] of [['human_name', human], ['engine_name', engine]]) {
+      if (!optStr(a[k], k)) continue;
+      if (opts[c]) fail(`"${k}" and "${c}_name" both name ${c}`);
+      opts[c] = { name: a[k] };
+    }
+  };
   switch (name) {
     case 'create_game': {
       const opts = {};
@@ -311,6 +321,7 @@ async function callTool(backend, name, a = {}, link) {
         if (opts.engine) fail('"human_side" cannot be combined with "engine_side"');
         const side = human === 'random' ? (Math.random() < 0.5 ? 'white' : 'black') : human;
         const agent = side === 'white' ? 'black' : 'white';
+        sideNames(opts, side, agent);
         const full = await backend.create(opts);
         const { [`${side}_token`]: humanToken, ...s } = full;
         Object.assign(s, { human_side: side, human_link: link(s.game_id, humanToken), agent_side: agent, token: s[`${agent}_token`] });
@@ -321,6 +332,10 @@ async function callTool(backend, name, a = {}, link) {
             `Give the user this link to play ${side} in the browser (it contains their token; do not move for ${side}):\n${s.human_link}\n\n${describe({ ...s, you: agent }, link)}`,
         };
       }
+      if (opts.engine) {
+        const other = opts.engine.side === 'white' ? 'black' : 'white';
+        sideNames(opts, other, opts.engine.side);
+      } else if (a.human_name !== undefined || a.engine_name !== undefined) fail('"human_name" / "engine_name" need "human_side" or "engine_side"');
       const s = await backend.create(opts);
       const tokens = ['white', 'black'].filter((c) => s[`${c}_token`]).map((c) => `${c}_token: ${s[`${c}_token`]}`);
       return { s, text: `Created game ${s.game_id}.\n${tokens.join('\n')}\nKeep tokens secret; pass one to make_move/get_board.\n\n${describe(s, link)}` };
