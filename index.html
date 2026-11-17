@@ -204,6 +204,12 @@
           </select>
         </label>
       </div>
+      <details class="group" id="ng-import-box">
+        <summary><i data-icon="file-up"></i>Start from an exported game or position (optional)</summary>
+        <textarea id="ng-import" rows="5" spellcheck="false" placeholder="Paste a PGN or FEN. Play continues from its last position; set the opponent and options above first."></textarea>
+        <div class="buttons"><button type="button" id="ng-import-file"><i data-icon="folder-open"></i><span class="lbl">Choose file…</span></button></div>
+        <input type="file" id="ng-import-input" accept=".pgn,.fen,.txt,text/plain" hidden>
+      </details>
       <p id="ng-error" class="modal-error"></p>
       <div class="buttons">
         <button type="submit" id="ng-start"><i data-icon="circle-play"></i><span class="lbl">Start</span></button>

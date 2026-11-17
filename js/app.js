@@ -1060,9 +1060,44 @@ function dialogTimeControl() {
   return { patch, opts: { clock: { initial_ms: Math.round(min * 60000), increment_ms: Math.round(inc * 1000) } } };
 }
 
+/** { startFen, moves (UCI) } from pasted PGN or FEN text; throws if neither parses. */
+function parseStart(text) {
+  try {
+    return { startFen: new Chess(text).fen(), moves: [] };
+  } catch {
+    const { startFen, moves } = pgnToRecord(text);
+    return { startFen, moves };
+  }
+}
+const IMPORT_KEY = 'chess-import';
+/** Replay imported moves into the history format newGame() expects. */
+function importedHistory({ startFen, moves }) {
+  const g = new Chess(startFen);
+  return moves.map((u) => {
+    const r = g.move(fromUci(u));
+    return { from: r.from, to: r.to, promotion: r.promotion, san: r.san };
+  });
+}
+$('#ng-import-file').on('click', () => $('#ng-import-input').trigger('click'));
+$('#ng-import-input').on('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (file) $('#ng-import').val(await file.text());
+});
+
 /** Start the chosen game: online ones are created on the server, then the page opens them by URL. */
 async function startFromDialog() {
   const opp = ngOpponent();
+  const importText = String($('#ng-import').val()).trim();
+  let start = null;
+  if (importText) {
+    try {
+      start = parseStart(importText);
+      importedHistory(start);
+    } catch (err) {
+      return $('#ng-error').text(`Invalid PGN/FEN: ${err.message || err}`);
+    }
+  }
   const sideSel = String($('#ng-side').val());
   const level = Number($('#ng-level').val());
   const tc = dialogTimeControl();
@@ -1080,10 +1115,17 @@ async function startFromDialog() {
   if (local) {
     $('#newgame-modal')[0].close();
     const hash = opp === 'analysis' ? 'analysis' : 'stockfish';
-    if (remote) return location.assign(`${location.pathname}#${hash}`);
+    if (remote) {
+      try {
+        if (start) sessionStorage.setItem(IMPORT_KEY, JSON.stringify(start));
+      } catch {
+        /* import lost; a fresh board opens */
+      }
+      return location.assign(`${location.pathname}#${hash}`);
+    }
     if (!confirmIf(inProgress(), 'Abandon the current game and start a new one? (It stays in My games.)')) return;
     changeSettings({ mode: hash === 'analysis' ? 'free' : 'bot' });
-    return newGame();
+    return start ? newGame(start.startFen, importedHistory(start)) : newGame();
   }
   const me = sideSel === 'random' ? (Math.random() < 0.5 ? 'w' : 'b') : sideSel;
   const [mine, theirs] = me === 'w' ? ['white', 'black'] : ['black', 'white'];
@@ -1094,7 +1136,7 @@ async function startFromDialog() {
   try {
     const g = await botApi.create({
       ...tc.opts,
-      premoves: allowPremoves,
+      ...(start ? { fen: start.startFen, moves: start.moves } : {}),      premoves: allowPremoves,
       eval_bar: evalBar,
       analysis: allowAnalysis,
       [mine]: { name: myName() },
@@ -1829,5 +1871,13 @@ else if (location.hash === '#analysis' || location.hash === '#stockfish') {
   const mode = location.hash === '#analysis' ? 'free' : 'bot';
   history.replaceState(null, '', location.pathname);
   changeSettings({ mode });
-  newGame();
+  let start = null;
+  try {
+    start = JSON.parse(sessionStorage.getItem(IMPORT_KEY) || 'null');
+    sessionStorage.removeItem(IMPORT_KEY);
+  } catch {
+    /* none */
+  }
+  if (start) newGame(start.startFen, importedHistory(start));
+  else newGame();
 }
