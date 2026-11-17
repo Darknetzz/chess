@@ -624,8 +624,21 @@ function showGameOver({ kind, reason }) {
   $('#go-title').html(`${icon(ico)}${title}`);
   $('#go-reason').text(reason ? reason.charAt(0).toUpperCase() + reason.slice(1) : '');
   const dlg = $('#gameover-modal').toggleClass('lost', kind === 'lost')[0];
+  $('#go-takeback').prop('hidden', !canReopen());
   if (!dlg.open) dlg.showModal();
 }
+/** Takeback offered from the game-over dialog: local games with free undo, or online games against an engine (not after a timeout). */
+function canReopen() {
+  if (!remote) return undoTarget() !== null;
+  const s = remote.server;
+  if (!s || !remote.side || !['checkmate', 'stalemate', 'draw', 'resigned'].includes(s.status)) return false;
+  return !!netEngineSide() || !!s.players?.[remote.side === 'w' ? 'black' : 'white']?.engine;
+}
+$('#go-takeback').on('click', () => {
+  $('#gameover-modal')[0].close();
+  if (!remote) return undo();
+  remoteAction(() => botApi.takeback(remote.id, remote.token, 'request', remote.engineToken || undefined), 'Takeback');
+});
 $('#go-close').on('click', () => $('#gameover-modal')[0].close());
 $('#go-new').on('click', () => {
   $('#gameover-modal')[0].close();
@@ -1483,7 +1496,8 @@ function maybeSaveNet() {
     title: `Online game ${remote.id}${s.clock ? ` · ${tcLabel(s.clock)}` : ''}`,
     assisted: state.assisted,
   };
-  store.save(rec).catch((err) => {
+  rec.id = remote.recordId ?? null; // a reopened game updates its earlier record
+  store.save(rec).then((saved) => (remote.recordId = saved.id), (err) => {
     remote.saved = false;
     netStore.set(remote.id, { saved: false });
     saveError = `Not saved: ${err.message || err}`;
@@ -1547,6 +1561,9 @@ function applyServer(s) {
   if (s.status !== 'ongoing') {
     premoves = [];
     pendingMove = null;
+  } else if (remote.saved) {
+    remote.saved = false; // reopened by a takeback: save again once it ends
+    netStore.set(remote.id, { saved: false });
   }
   const local = state.history.map(toUci);
   const srv = s.moves.map((m) => m.uci);

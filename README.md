@@ -81,7 +81,7 @@ Refereed games for external bots, or a bot against a human. The server holds the
 | `POST /api/games/{id}/resign` | `{token}` | Resign the token's side |
 | `POST /api/games/{id}/abort` | `{token}` | Abort (no result) while `ply < 2`, i.e. before both sides' first moves |
 | `POST /api/games/{id}/draw` | `{token, action}` | `offer`, `accept` or `decline` a draw (see *Offers*) |
-| `POST /api/games/{id}/takeback` | `{token, action}` | `request`, `accept` or `decline` a takeback (see *Offers*) |
+| `POST /api/games/{id}/takeback` | `{token, action}` | `request`, `accept` or `decline` a takeback (see *Offers*); after a mate, stalemate, draw or resignation (not timeout) against an engine, `request` reopens the game (browser engines: add `opponent_token`) |
 | `POST /api/games/{id}/name` | `{token, name}` | Set the display name of the token's side (up to 40 chars, `""` clears it) while the game is ongoing |
 | `POST /api/games/{id}/rules` | `{token, analysis}` | Allow (`true`) or forbid (`false`) Stockfish analysis mid-game. Only in games created with `agent: true` (`409 rules_locked` otherwise) |
 

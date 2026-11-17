@@ -766,8 +766,31 @@ function draw(g, body) {
   return commit(g);
 }
 
+/**
+ * Takeback after the game ended (mate, stalemate, draw, resignation; not timeouts/aborts): reopens it.
+ * Needs no consent when the opponent is an engine: the server's own, or a browser one whose token is sent as opponent_token.
+ */
+function reopen(g, body) {
+  const r = g.row;
+  const side = authSide(g, body.token);
+  if (body.action !== 'request') throw err(409, 'game_over', `Game is over (${r.status}, ${r.result})`);
+  if (!['checkmate', 'stalemate', 'draw', 'resigned'].includes(r.status)) throw err(409, 'game_over', `Game is over (${r.status}, ${r.result})`);
+  const other = side === 'w' ? 'b' : 'w';
+  const engineOpp = r.engine_side === other || (typeof body.opponent_token === 'string' && authSide(g, body.opponent_token) === other);
+  if (!engineOpp) throw err(409, 'game_over', 'Only games against an engine can be reopened');
+  const n = plyToUndo(g, side);
+  if (!n) throw err(409, 'nothing_to_take_back', 'You have not made a move yet');
+  const now = Date.now();
+  Object.assign(r, { status: 'ongoing', result: '*', reason: null, last_move_at: now });
+  live.set(r.id, g);
+  g.thinking = false;
+  undo(g, n);
+  return commit(g);
+}
+
 /** Takebacks: request (undoes the requester's last move once granted), accept, decline. */
 function takeback(g, body) {
+  if (g.row.status !== 'ongoing') return reopen(g, body);
   const side = actor(g, body);
   needAction('takeback', body.action);
   const r = g.row;

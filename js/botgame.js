@@ -86,6 +86,6 @@ export const botApi = {
   resign: (id, token) => req(`${id}/resign`, { method: 'POST', body: { token } }),
   abort: (id, token) => req(`${id}/abort`, { method: 'POST', body: { token } }),
   draw: (id, token, action) => req(`${id}/draw`, { method: 'POST', body: { token, action } }),
-  takeback: (id, token, action) => req(`${id}/takeback`, { method: 'POST', body: { token, action } }),
+  takeback: (id, token, action, opponentToken) => req(`${id}/takeback`, { method: 'POST', body: { token, action, opponent_token: opponentToken } }),
   setName: (id, token, name) => req(`${id}/name`, { method: 'POST', body: { token, name } }),
 };
