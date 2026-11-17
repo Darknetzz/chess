@@ -46,7 +46,7 @@ Open http://localhost:8080. `.env` options (all listed with defaults in `.env.ex
 - `CHESS_MCP_LIBRARY_KEY` – optional default web-app API key for the MCP library tools (`list_library_games`, `create_game` `library_game_id`), so agents needn't be handed one. `/mcp` is already owner-only behind `CHESS_MCP_TOKEN`.
 - `CHESS_LIBRARY_API_URL` – where the bot service reaches the web app for those tools (default `http://chess`, the `chess` service).
 
-The Docker build writes `version.json` (commit hash + date), shown at the bottom of the side panel; other installs simply don't show it. It's read from `.git` in the build context; without it the build still works and the line is just hidden.
+`version.json` (build number = commit count, plus date) is shown at the bottom of the side panel. It's a tracked file written by the `pre-commit` hook in `.githooks/`, so it works for git-synced deploys with no `.git` (e.g. Arcane). Enable the hook once per clone: `git config core.hooksPath .githooks`.
 
 The SQLite DB lives in the `chess-data` volume (`/data/chess.sqlite`). Bot API games live in the `bot-data` volume (`/data/bot.sqlite`). Apache proxies `/api/games`, `/api/games/*` and `/mcp` to the `bot` container. Behind another reverse proxy (e.g. NPMplus) just forward the whole site; `https://<host>/mcp` then works, and set `CHESS_BOT_PROXY_HOPS=2`.
 

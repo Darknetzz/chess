@@ -1,0 +1,6 @@
+#!/bin/sh
+# Writes version.json (build number = commit count of the commit being made, + date) and stages it.
+# Shown at the bottom of the side panel. Enable once per clone: git config core.hooksPath .githooks
+n=$(( $(git rev-list --count HEAD 2>/dev/null || echo 0) + 1 ))
+printf '{"build":%s,"date":"%s"}\n' "$n" "$(date +%F)" > version.json
+git add version.json

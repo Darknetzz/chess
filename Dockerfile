@@ -1,10 +1,3 @@
-# Commit hash + date for the version line on the page. The context is bind-mounted, so a
-# missing .git (e.g. git-synced deploys) just yields {} and the page hides the line.
-FROM alpine/git:2.54.0 AS version
-RUN --mount=type=bind,target=/src \
-    git -c safe.directory='*' -C /src log -1 --format='{"commit":"%h","date":"%cs"}' > /version.json 2>/dev/null \
- || echo '{}' > /version.json
-
 FROM php:8.5.12-apache
 
 # mod_headers/deflate for .htaccess caching + compression; allow .htaccess overrides.
@@ -22,7 +15,7 @@ COPY --chown=www-data:www-data js /var/www/html/js
 COPY --chown=www-data:www-data img /var/www/html/img
 COPY --chown=www-data:www-data vendor /var/www/html/vendor
 COPY --chown=www-data:www-data api /var/www/html/api
-COPY --from=version --chown=www-data:www-data /version.json /var/www/html/version.json
+COPY --chown=www-data:www-data version.json /var/www/html/version.json
 COPY bot/apache.conf /etc/apache2/conf-enabled/zz-bot.conf
 
 ENV DATA_DIR=/data

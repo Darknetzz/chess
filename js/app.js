@@ -1160,10 +1160,10 @@ $('#replay-exit').on('click', () => exitReplay());
 $('#games-btn').on('click', () => library.open());
 $('#settings-btn').on('click', () => settingsUi.open());
 
-// version.json is written by the Docker build; absent elsewhere, then the line stays hidden.
+// version.json is written by the pre-commit hook (.githooks); if missing the line stays hidden.
 fetch('version.json', { cache: 'no-store' })
   .then((r) => (r.ok ? r.json() : null))
-  .then((v) => { if (v?.commit) $('#version').text(`Version ${v.commit} · ${v.date}`).prop('hidden', false); })
+  .then((v) => { if (v?.build) $('#version').text(`Build ${v.build} · ${v.date}`).prop('hidden', false); })
   .catch(() => {});
 
 $('#export-menu').on('toggle', function (e) {
