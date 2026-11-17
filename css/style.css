@@ -518,7 +518,7 @@ button[hidden] { display: none; }
 .copy-row input { flex: 1; min-width: 0; font: 12px ui-monospace, monospace; }
 .copy-row button { flex: none; padding-inline: 8px; }
 #newgame-modal { width: min(420px, 92vw); }
-#newgame-modal .buttons, #gameover-modal .buttons { grid-template-columns: 1fr 1fr; }
+#newgame-modal .buttons, #gameover-modal .buttons, #offer-modal .buttons { grid-template-columns: 1fr 1fr; }
 .group .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .group .row2[hidden], .group p[hidden] { display: none; }
 .ng-clock-note { margin: 0; font-size: 12px; }

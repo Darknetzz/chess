@@ -1349,7 +1349,35 @@ function renderNetActions() {
       + `<button type="button" data-offer="${kind}" data-act="accept">Accept</button><button type="button" data-offer="${kind}" data-act="decline">Decline</button></div>`);
   }
   $('#net-offers').html(rows.join('')).prop('hidden', !rows.length);
+  syncOfferModal(offers, me);
 }
+
+/** Incoming draw / takeback offers pop up and must be answered (Esc doesn't dismiss); closes if the offer goes away. */
+let offerShown = null;
+function syncOfferModal(offers, me) {
+  const kind = ['takeback', 'draw'].find((k) => offers[k] && offers[k] !== me) || null;
+  const dlg = $('#offer-modal')[0];
+  if (!kind) {
+    offerShown = null;
+    if (dlg.open) dlg.close();
+    return;
+  }
+  const key = `${remote.id}:${kind}:${remote.server.ply}`;
+  if (offerShown === key && dlg.open) return;
+  offerShown = key;
+  const by = offers[kind] === 'white' ? 'White' : 'Black';
+  $('#offer-title').html(`${icon(kind === 'draw' ? 'handshake' : 'undo-2')}${kind === 'draw' ? 'Draw offer' : 'Takeback request'}`);
+  $('#offer-text').text(kind === 'draw' ? `${by} offers a draw.` : `${by} asks to take back their last move.`);
+  $('#offer-modal').data('kind', kind);
+  if (!dlg.open) dlg.showModal();
+}
+$('#offer-modal').on('cancel', (e) => e.preventDefault()); // must answer
+$('#offer-modal').on('click', 'button', function () {
+  const kind = $('#offer-modal').data('kind');
+  const act = this.id === 'offer-accept' ? 'accept' : 'decline';
+  $('#offer-modal')[0].close();
+  remoteAction(() => botApi[kind](remote.id, remote.token, act), kind === 'draw' ? 'Draw' : 'Takeback');
+});
 
 /** Send a player action (abort/draw/takeback) and show the result. */
 async function remoteAction(call, what) {
