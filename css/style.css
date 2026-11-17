@@ -236,6 +236,14 @@ label.inline select { width: auto; }
   border-radius: 6px;
   background: var(--btn);
   font-weight: 600;
+  /* Fixed two-line box: long messages (errors, "viewing move…") must not push the controls down. */
+  box-sizing: border-box;
+  height: calc(2lh + 16px);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  align-content: center;
 }
 .status.over { background: var(--accent); color: #fff; }
 .status.over.lost { background: #b33a3a; }

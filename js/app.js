@@ -574,7 +574,7 @@ function statusText() {
 
 function renderStatus() {
   const text = statusText();
-  if ($('#status').text() !== text) $('#status').text(text); // unchanged text: don't re-announce (aria-live)
+  if ($('#status').text() !== text) $('#status').text(text).attr('title', text); // unchanged text: don't re-announce (aria-live)
   const over = isOver() && !state.replay;
   const outcome = over ? playerOutcome() : null;
   $('#status').toggleClass('over', over).toggleClass('lost', outcome?.kind === 'lost').toggleClass('thinking', thinking);
