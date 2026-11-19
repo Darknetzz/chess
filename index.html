@@ -363,6 +363,13 @@
         <label>Replay speed (s/move) <input type="number" name="autoplaySpeed" min="0.25" max="5" step="0.25"></label>
       </fieldset>
       <fieldset>
+        <legend><i data-icon="cpu"></i>Analysis engine</legend>
+        <label>Threads <select name="engineThreads"></select></label>
+        <label>Hash <select name="engineHash"></select></label>
+        <label>Search depth <input type="number" name="analysisDepth" min="10" max="60" step="1"></label>
+        <p class="settings-note" id="engine-note"></p>
+      </fieldset>
+      <fieldset>
         <legend><i data-icon="sliders-horizontal"></i>Behaviour</legend>
         <label class="check"><input type="checkbox" name="showHints"> Show legal moves</label>
         <label class="check"><input type="checkbox" name="showLastMove"> Highlight last move</label>

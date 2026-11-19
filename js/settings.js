@@ -68,7 +68,13 @@ export const DEFAULTS = {
   allowAnalysis: false, // default for the New game dialog's "allow analysis" (online games)
   freeUndo: false, // default for the New game dialog's Stockfish "free undo/redo" (local game, no clock)
   autoplaySpeed: 1.5,
+  // analysis engine (this device)
+  engineThreads: 0, // 0 = auto (all cores but one)
+  engineHash: 128, // MB
+  analysisDepth: 28,
 };
+
+export const ENGINE_HASH_MB = [16, 32, 64, 128, 256, 512, 1024];
 
 const ENUMS = {
   mode: ['free', 'bot'],
@@ -81,8 +87,9 @@ const ENUMS = {
   animation: Object.keys(ANIMATION_MS),
   timeControl: [...Object.keys(CLOCK_PRESETS), 'custom', 'move'],
   moveTimeMs: MOVE_TIMES,
+  engineHash: ENGINE_HASH_MB,
 };
-const RANGES = { level: [0, 20], boardSize: [320, 1200], volume: [0, 100], autoplaySpeed: [0.25, 5], clockMinutes: [0.25, 180], clockIncrement: [0, 180] };
+const RANGES = { level: [0, 20], boardSize: [320, 1200], volume: [0, 100], autoplaySpeed: [0.25, 5], clockMinutes: [0.25, 180], clockIncrement: [0, 180], engineThreads: [0, 256], analysisDepth: [10, 60] };
 
 /** Game-mode keys: kept from the session in progress when account settings load. */
 export const GAME_KEYS = ['mode', 'side', 'level', 'orientation', 'timeControl', 'clockMinutes', 'clockIncrement', 'moveTimeMs', 'premoves', 'evalBar', 'allowAnalysis', 'freeUndo'];

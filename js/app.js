@@ -28,8 +28,9 @@ const BOT_PAUSE_MS = 350; // minimum gap between the player's move landing and t
 const RESULT_TEXT = { '1-0': 'White wins', '0-1': 'Black wins', '1/2-1/2': 'Draw', '*': 'Unfinished' };
 
 const STOCKFISH_URL = new URL('../vendor/stockfish/stockfish-19-lite-single.js', import.meta.url);
+const STOCKFISH_MT_URL = new URL('../vendor/stockfish/stockfish-19-lite.js', import.meta.url);
 const engine = new Engine(STOCKFISH_URL);
-const analyzer = new Analyzer(STOCKFISH_URL);
+const analyzer = new Analyzer({ single: STOCKFISH_URL, multi: STOCKFISH_MT_URL });
 
 // ---- State -----------------------------------------------------------------
 const state = {
@@ -877,8 +878,11 @@ function saveSettings() {
 const gameBits = () => Object.fromEntries(Settings.GAME_KEYS.map((k) => [k, state.settings[k]]));
 
 function applySettings() {
-  Settings.apply(state.settings);
-  setPieceSet(state.settings.pieceSet);
+  const s = state.settings;
+  Settings.apply(s);
+  setPieceSet(s.pieceSet);
+  // Restart a running analysis with the new engine options (refreshAnalysis picks it up).
+  if (analyzer.configure({ threads: s.engineThreads, hash: s.engineHash, depth: s.analysisDepth })) analysisKey = null;
 }
 
 function changeSettings(patch) {

@@ -113,14 +113,30 @@ export class Engine {
   }
 }
 
+/** Threads the multi-threaded build can use here (SharedArrayBuffer needs a cross-origin isolated page). */
+export function maxEngineThreads() {
+  const isolated = globalThis.crossOriginIsolated === true && typeof SharedArrayBuffer === 'function';
+  return isolated ? Math.max(1, navigator.hardwareConcurrency || 1) : 1;
+}
+
+/** Threads for a setting value: 0 = auto (all cores but one), else clamped to what's available. */
+export function engineThreads(setting) {
+  const max = maxEngineThreads();
+  return setting > 0 ? Math.min(setting, max) : Math.max(1, max - 1);
+}
+
 /**
  * Continuous analysis on its own worker (full strength, independent of the bot).
  * analyze(fen, onUpdate) streams { depth, cp, mate, best } from White's point of view.
+ * urls: { single, multi } builds; the multi-threaded one is used when more than one thread is available.
  */
 export class Analyzer {
-  constructor(url, depth = 28) {
-    this.url = url;
+  constructor(urls, { depth = 28, threads = 0, hash = 128 } = {}) {
+    this.urls = urls;
     this.depth = depth;
+    this.threadSetting = threads;
+    this.hash = hash;
+    this.threads = 1; // threads of the running worker
     this.worker = null;
     this.readyPromise = null;
     this.searching = false;
@@ -129,20 +145,42 @@ export class Analyzer {
     this.frame = 0;
   }
 
+  /**
+   * Update search options. Returns true when the running search must restart (the worker is
+   * recreated on the next analyze() if threads or hash changed).
+   */
+  configure({ depth, threads, hash }) {
+    let restart = false;
+    if (depth !== undefined && depth !== this.depth) {
+      this.depth = depth;
+      restart = true;
+    }
+    if ((threads !== undefined && threads !== this.threadSetting) || (hash !== undefined && hash !== this.hash)) {
+      this.threadSetting = threads ?? this.threadSetting;
+      this.hash = hash ?? this.hash;
+      if (this.worker) this.terminate();
+      restart = true;
+    }
+    return restart;
+  }
+
   init() {
     if (this.readyPromise) return this.readyPromise;
-    this.readyPromise = new Promise((resolve, reject) => {
+    const threads = engineThreads(this.threadSetting);
+    const start = (multi) => new Promise((resolve, reject) => {
       try {
-        this.worker = new Worker(this.url);
+        this.worker = new Worker(multi ? this.urls.multi : this.urls.single);
       } catch (err) {
         reject(err);
         return;
       }
+      this.threads = multi ? threads : 1;
       this.worker.onerror = (e) => reject(e.message || e);
       this.worker.onmessage = (e) => {
         const line = typeof e.data === 'string' ? e.data : String(e.data ?? '');
         if (line === 'uciok') {
-          this.worker.postMessage('setoption name Hash value 64'); // deep searches thrash the default 16 MB
+          if (multi) this.worker.postMessage(`setoption name Threads value ${threads}`);
+          this.worker.postMessage(`setoption name Hash value ${this.hash}`);
           this.worker.postMessage('isready');
         }
         else if (line === 'readyok') resolve();
@@ -150,6 +188,13 @@ export class Analyzer {
         else if (line.startsWith('bestmove')) this._onBestmove();
       };
       this.worker.postMessage('uci');
+    });
+    const multi = threads > 1 && !!this.urls.multi;
+    this.readyPromise = start(multi).catch((err) => {
+      if (!multi) throw err;
+      console.warn('Multi-threaded Stockfish failed, using the single-threaded build', err);
+      this.worker?.terminate();
+      return start(false);
     });
     return this.readyPromise;
   }

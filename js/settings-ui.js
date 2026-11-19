@@ -1,6 +1,7 @@
 // Settings dialog: renders the form from the current settings and reports changes.
 /* global $ */
-import { BOARD_THEMES, PIECE_SETS, DEFAULTS, GAME_KEYS, boardColors } from './settings.js';
+import { BOARD_THEMES, PIECE_SETS, DEFAULTS, GAME_KEYS, ENGINE_HASH_MB, boardColors } from './settings.js';
+import { maxEngineThreads, engineThreads } from './engine.js';
 import { pieceUrl } from './board.js';
 import { enhanceSelect } from './preview-select.js';
 
@@ -17,6 +18,15 @@ export function initSettingsUi({ get, onChange }) {
   $form.find('[name=boardTheme]').html(Object.entries(BOARD_THEMES).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join(''));
   $form.find('[name=pieceSet]').html(Object.entries(PIECE_SETS).map(([k, label]) => `<option value="${k}">${label}</option>`).join(''));
 
+  const maxThreads = maxEngineThreads();
+  $form.find('[name=engineThreads]').html(
+    [`<option value="0">Auto (${engineThreads(0)})</option>`, ...Array.from({ length: maxThreads }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`)].join(''),
+  );
+  $form.find('[name=engineHash]').html(ENGINE_HASH_MB.map((mb) => `<option value="${mb}">${mb >= 1024 ? `${mb / 1024} GB` : `${mb} MB`}</option>`).join(''));
+  $('#engine-note').text(maxThreads > 1
+    ? `${maxThreads} CPU threads available.`
+    : 'Multi-threading unavailable here (needs a cross-origin isolated page), so the engine uses one thread.');
+
   const pickers = Object.entries(previewRenderers(get)).map(([name, render]) => enhanceSelect($form.find(`[name=${name}]`)[0], render));
 
   function fill() {
@@ -25,6 +35,7 @@ export function initSettingsUi({ get, onChange }) {
       const v = s[el.name];
       if (v === undefined) return;
       if (el.type === 'checkbox') el.checked = !!v;
+      else if (el.name === 'engineThreads') el.value = String(Math.min(v, maxThreads));
       else el.value = String(v);
     });
     // Custom colour pickers start from the active theme so switching to "custom" is seamless.
@@ -48,7 +59,7 @@ export function initSettingsUi({ get, onChange }) {
     else if (el.type === 'range' || el.type === 'number') {
       v = Number(el.value);
       if (!Number.isFinite(v) || el.value === '') return;
-    } else v = el.value;
+    } else v = typeof DEFAULTS[el.name] === 'number' ? Number(el.value) : el.value;
     const patch = { [el.name]: v };
     if (el.name === 'boardTheme' && v === 'custom') {
       patch.lightColor = String($form.find('[name=lightColor]').val());

@@ -12,6 +12,10 @@ Options -Indexes
 </IfModule>
 
 <IfModule mod_headers.c>
+    # Cross-origin isolation: lets the multi-threaded Stockfish use SharedArrayBuffer.
+    # Every cross-origin resource must then opt in (CORS + crossorigin attribute, or CORP).
+    Header always set Cross-Origin-Opener-Policy "same-origin"
+    Header always set Cross-Origin-Embedder-Policy "require-corp"
     <FilesMatch "\.(wasm|svg|css|js)$">
         Header set Cache-Control "public, max-age=86400"
     </FilesMatch>
