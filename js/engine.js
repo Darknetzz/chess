@@ -42,6 +42,12 @@ export class Engine {
         }
       };
       this.send('uci');
+    }).catch((err) => {
+      // Let the next call try again instead of failing for the rest of the session.
+      this.worker?.terminate();
+      this.worker = null;
+      this.readyPromise = null;
+      throw err;
     });
     return this.readyPromise;
   }

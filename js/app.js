@@ -27,8 +27,9 @@ const COLOR_NAME = { w: 'White', b: 'Black' };
 const BOT_PAUSE_MS = 350; // minimum gap between the player's move landing and the bot's reply
 const RESULT_TEXT = { '1-0': 'White wins', '0-1': 'Black wins', '1/2-1/2': 'Draw', '*': 'Unfinished' };
 
-const STOCKFISH_URL = new URL('../vendor/stockfish/stockfish-19-lite-single.js', import.meta.url);
-const STOCKFISH_MT_URL = new URL('../vendor/stockfish/stockfish-19-lite.js', import.meta.url);
+// ?coi: copies cached before the COOP/COEP headers lack COEP, and Chrome refuses them as workers.
+const STOCKFISH_URL = new URL('../vendor/stockfish/stockfish-19-lite-single.js?coi', import.meta.url);
+const STOCKFISH_MT_URL = new URL('../vendor/stockfish/stockfish-19-lite.js?coi', import.meta.url);
 const engine = new Engine(STOCKFISH_URL);
 const analyzer = new Analyzer({ single: STOCKFISH_URL, multi: STOCKFISH_MT_URL });
 
