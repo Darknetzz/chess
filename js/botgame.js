@@ -81,6 +81,7 @@ export const gameLink = (id, token) => {
 export const botApi = {
   create: (opts) => req('', { method: 'POST', body: opts }),
   get: (id, token) => req(id, { token }),
+  byToken: (token) => req('by-token', { token }),
   wait: (id, since, token, signal) => req(`${id}/wait?since=${since}`, { token, signal }),
   move: (id, token, move) => req(`${id}/move`, { method: 'POST', body: { token, move } }),
   resign: (id, token) => req(`${id}/resign`, { method: 'POST', body: { token } }),

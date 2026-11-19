@@ -210,6 +210,11 @@
         <div class="buttons"><button type="button" id="ng-import-file"><i data-icon="folder-open"></i><span class="lbl">Choose file…</span></button></div>
         <input type="file" id="ng-import-input" accept=".pgn,.fen,.txt,text/plain" hidden>
       </details>
+      <details class="group" id="ng-join-box">
+        <summary><i data-icon="key-round"></i>Join a game with a token or link</summary>
+        <input id="ng-join" spellcheck="false" autocomplete="off" placeholder="Paste a player token or game link">
+        <div class="buttons"><button type="button" id="ng-join-go"><i data-icon="log-in"></i><span class="lbl">Join</span></button></div>
+      </details>
       <p id="ng-error" class="modal-error"></p>
       <div class="buttons">
         <button type="submit" id="ng-start"><i data-icon="circle-play"></i><span class="lbl">Start</span></button>

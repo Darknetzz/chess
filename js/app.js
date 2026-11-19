@@ -1164,6 +1164,47 @@ async function startFromDialog() {
   }
 }
 
+/** Join a server game from a pasted token (or a game link, with or without #token=). */
+async function joinFromDialog() {
+  const text = String($('#ng-join').val()).trim();
+  if (!text) return $('#ng-error').text('Paste a token or game link first.');
+  let id = null;
+  let token = text;
+  if (/[?#&]game=|^https?:/i.test(text)) {
+    try {
+      const u = new URL(text, location.href);
+      id = u.searchParams.get('game');
+      token = new URLSearchParams(u.hash.slice(1)).get('token') || u.searchParams.get('token');
+    } catch {
+      return $('#ng-error').text('That link is not valid.');
+    }
+  }
+  if (!token && id) return location.assign(gameLink(id));
+  if (!/^[\w-]{8,200}$/.test(token || '')) return $('#ng-error').text('That does not look like a game token.');
+  $('#ng-join-go').prop('disabled', true);
+  $('#ng-error').text('Looking up the game…');
+  try {
+    const s = await botApi.byToken(token);
+    if (id && id !== s.game_id) throw new Error('The token belongs to a different game');
+    id = s.game_id;
+  } catch (err) {
+    $('#ng-join-go').prop('disabled', false);
+    return $('#ng-error').text(err.status === 404 ? 'No game found for this token.' : `Could not join: ${err.message}`);
+  }
+  const prev = netStore.get(id);
+  if (prev.token !== token) netStore.set(id, { token, engineToken: null, analysis: null, invite: null, botToken: null });
+  flushSave();
+  const target = `${location.pathname}?game=${id}`;
+  if (location.search === `?game=${id}` && !location.hash) location.reload();
+  else location.assign(target);
+}
+$('#ng-join-go').on('click', joinFromDialog);
+$('#ng-join').on('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  joinFromDialog();
+});
+
 $('#ng-opponent, #ng-tc, #ng-undo').on('change', syncNewGameForm);
 function ngOpponent() {
   return $('#ng-opponent input:checked').val();

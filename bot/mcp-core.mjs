@@ -20,7 +20,7 @@ Loop: get_board with your token tells you your side ("you"). If it is your turn,
 Otherwise call get_board with wait_since_ply = the current ply; it returns when the opponent moves (or after ~25 s unchanged).
 Time: nothing counts down until both sides are connected (aborted after 24 h if they never are). Then each side has first_move_ms (30 min) for its first move, else the game is aborted. After that, per-move games give every move move_time_ms; clock games ("clock" set) give each side initial_ms plus increment_ms per move. Running out loses on time. Stop when status is no longer "ongoing".
 Every tool that takes game_id also works with just your token. list_games shows ongoing games used through this server.
-To play against the user: create_game with human_side; you get only your own token plus a link for the user to play their side in the browser. Give them the link and never move for their side. If the user gives you a token (e.g. the bot token from a "Bot" game in the web client), call get_board with just that token and play only that side.
+To play against the user: create_game with human_side; you get only your own token plus a link for the user to play their side in the browser. Give them the link and never move for their side. To let the user play Stockfish while you watch: create_game with engine_side and human_side; give the user the returned link (never a bare token) and spectate with get_board using game_id and wait_since_ply. If the user gives you a token (e.g. the bot token from a "Bot" game in the web client), call get_board with just that token and play only that side.
 Custom start: create_game takes one of fen, pgn, from_game_id (an earlier game here; find them with list_games status/player) or library_game_id (the user's saved games in the web app; find them with list_library_games), plus ply to start after that many of its moves (default: its final position). The new game's move list starts empty at that position.
 Before both sides' first moves either side may abort; later, end a lost game with resign. Draws: draw offer/accept/decline (moving also declines). Takebacks: takeback request undoes your last move once the opponent accepts. set_analysis turns Stockfish analysis for the web client on/off mid-game (games created through MCP only). Watch "offers" in get_board and answer offers made to you.`;
 
@@ -65,9 +65,9 @@ export const TOOLS = [
         black_name: str('Display name for black (max 40 chars)', { maxLength: 40 }),
         human_name: str("Display name for the user's side (human_side) or the side not played by the server engine (engine_side); applied once a random side is drawn. Max 40 chars", { maxLength: 40 }),
         engine_name: str("Display name for your side (with human_side) or the server engine's side (with engine_side); applied once a random side is drawn. Max 40 chars", { maxLength: 40 }),
-        engine_side: str('Let the server play this side with Stockfish', { enum: ['white', 'black'] }),
+        engine_side: str('Let the server play this side with Stockfish. With human_side "random" the engine takes whichever side the user does not get', { enum: ['white', 'black'] }),
         engine_level: int('Stockfish level 0-20 (default 5), only with engine_side', 0, 20),
-        human_side: str('The user plays this side in the browser; you get only the other side\'s token. Default: you control both sides. Not with engine_side', {
+        human_side: str('The user plays this side in the browser; you get only the other side\'s token. Default: you control both sides. With engine_side the user plays the engine and you only spectate (no token)', {
           enum: ['white', 'black', 'random'],
         }),
         fen: str('Start from this FEN (side to move, castling and en passant are taken from it). Only one of fen / pgn / from_game_id / library_game_id', { maxLength: 100 }),
@@ -318,8 +318,22 @@ async function callTool(backend, name, a = {}, link) {
       await startOpts(a, backend, opts);
       if (optStr(a.human_side, 'human_side')) {
         const human = choice('human_side', ['white', 'black', 'random']);
-        if (opts.engine) fail('"human_side" cannot be combined with "engine_side"');
         const side = human === 'random' ? (Math.random() < 0.5 ? 'white' : 'black') : human;
+        if (opts.engine) {
+          // User vs the server engine: the user plays in the browser, the agent only spectates.
+          if (human !== 'random' && human === opts.engine.side) fail('"human_side" and "engine_side" must differ');
+          opts.engine.side = side === 'white' ? 'black' : 'white';
+          sideNames(opts, side, opts.engine.side);
+          const { [`${side}_token`]: humanToken, ...s } = await backend.create(opts);
+          Object.assign(s, { human_side: side, human_link: link(s.game_id, humanToken) });
+          return {
+            s,
+            text:
+              `Created game ${s.game_id}: the user plays ${side} against Stockfish (level ${opts.engine.level}). You have no token: you only spectate.\n` +
+              `Give the user this link to play ${side} in the browser (it contains their token; never post the bare token):\n${s.human_link}\n` +
+              `To spectate, call get_board with game_id "${s.game_id}" and wait_since_ply.\n\n${describe(s, link)}`,
+          };
+        }
         const agent = side === 'white' ? 'black' : 'white';
         sideNames(opts, side, agent);
         const full = await backend.create(opts);
