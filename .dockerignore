@@ -9,3 +9,9 @@ README.md
 LICENSE
 .env
 .env.example
+.gitlab-ci.yml
+.githooks
+scripts
+CHANGELOG.md
+AGENTS.md
+CLAUDE.md

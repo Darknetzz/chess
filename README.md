@@ -50,6 +50,9 @@ Open http://localhost:8080. `.env` options (all listed with defaults in `.env.ex
 
 The SQLite DB lives in the `chess-data` volume (`/data/chess.sqlite`). Bot API games live in the `bot-data` volume (`/data/bot.sqlite`). Apache proxies `/api/games`, `/api/games/*` and `/mcp` to the `bot` container. Behind another reverse proxy (e.g. NPMplus) just forward the whole site; `https://<host>/mcp` then works, and set `CHESS_BOT_PROXY_HOPS=2`.
 
+### Prebuilt images
+Multi-arch (amd64/arm64) images are on Docker Hub (`darknetz/chess`, `darknetz/chess-bot`) and GHCR (`ghcr.io/darknetzz/chess`, `ghcr.io/darknetzz/chess-bot`). Tags: `latest` and `X.Y.Z`/`X.Y`/`X` for releases, `edge` and `build-N` for every push to `dev`. To use them instead of building, replace both `build:` entries in `compose.yaml` with `image: darknetz/chess:latest` and `image: darknetz/chess-bot:latest` (keep the service names: Apache proxies to `bot:3000`).
+
 ## Host on Apache / nginx
 Copy `index.html`, `.htaccess`, `api/`, `css/`, `js/`, `img/`, `vendor/` into the docroot (subdirectories work; all paths are relative).
 

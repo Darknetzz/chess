@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Release vX.Y.Z: commit CHANGELOG.md, tag, push dev + tag to GitLab and GitHub, create the GitHub release.
+# GitLab CI then creates the GitLab release and pushes the Docker images (see .gitlab-ci.yml).
+#
+# Before running: write a "## [vX.Y.Z] - YYYY-MM-DD" section at the top of CHANGELOG.md (uncommitted is fine).
+# Usage: scripts/release.sh X.Y.Z [--dry-run]
+set -euo pipefail
+
+GITHUB_REPO=Darknetzz/chess
+BRANCH=dev
+
+die() { echo "release: $*" >&2; exit 1; }
+
+VERSION="${1:-}"; VERSION="${VERSION#v}"
+DRY=""; [ "${2:-}" = "--dry-run" ] && DRY=1
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "usage: scripts/release.sh X.Y.Z [--dry-run]"
+TAG="v$VERSION"
+
+cd "$(git rev-parse --show-toplevel)"
+[ "$(git branch --show-current)" = "$BRANCH" ] || die "not on $BRANCH"
+[ "$(git config core.hooksPath)" = .githooks ] || die "pre-commit hook not enabled: git config core.hooksPath .githooks"
+OTHER=$(git status --porcelain | grep -v ' CHANGELOG.md$' || true)
+[ -z "$OTHER" ] || { printf '%s\n' "$OTHER" >&2; die "uncommitted changes besides CHANGELOG.md"; }
+
+git fetch --quiet --tags origin
+[ "$(git rev-list --count HEAD..origin/$BRANCH)" = 0 ] || die "origin/$BRANCH has commits you don't: pull first"
+git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && die "$TAG already exists"
+LATEST=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+if [ -n "$LATEST" ] && [ "$(printf '%s\n%s\n' "${LATEST#v}" "$VERSION" | sort -V | tail -n1)" != "$VERSION" ]; then
+  die "$TAG is not newer than $LATEST"
+fi
+
+NOTES=$(awk -v t="$TAG" '/^## \[/ { p = index($0, "## [" t "]") == 1; next } p' CHANGELOG.md)
+[ -n "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ] || die "CHANGELOG.md has no '## [$TAG]' section"
+
+command -v gh >/dev/null || die "gh (GitHub CLI) is needed for the GitHub release"
+gh auth status >/dev/null 2>&1 || die "gh is not logged in"
+
+echo "== lint"
+for f in api/*.php; do php -l "$f" >/dev/null || die "php -l $f failed"; done
+for f in bot/*.mjs; do node --check "$f" || die "node --check $f failed"; done
+
+echo "== release $TAG (previous: ${LATEST:-none})"
+printf '%s\n' "$NOTES"
+if [ -n "$DRY" ]; then echo "== dry run: nothing changed"; exit 0; fi
+
+git add CHANGELOG.md
+git commit -q -m "Release $TAG"   # the pre-commit hook updates version.json
+git tag -a "$TAG" -m "$TAG"
+
+echo "== push to GitLab (CI: GitLab release + Docker Hub/GHCR images)"
+git push --quiet origin "$BRANCH" "$TAG"
+echo "== push to GitHub"
+git push --quiet github "$BRANCH" "$TAG"
+
+NOTES_FILE=$(mktemp); trap 'rm -f "$NOTES_FILE"' EXIT
+printf '%s\n' "$NOTES" > "$NOTES_FILE"
+gh release create "$TAG" -R "$GITHUB_REPO" --title "$TAG" --notes-file "$NOTES_FILE" --verify-tag
+
+PROJECT=$(git remote get-url origin | sed -E 's#^.*[:/]([^/]+/[^/]+)\.git$#\1#')
+echo "== done. Pipeline: https://gitlab.kriss.li/$PROJECT/-/pipelines?ref=$TAG"
