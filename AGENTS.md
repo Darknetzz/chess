@@ -5,7 +5,9 @@
 
 ## Repos
 
-- `origin` = GitLab `gitlab.kriss.li/kriss/chess` (CI runs here). `github` = `Darknetzz/chess`, pushed by hand (no mirror). Do **not** add GitHub Actions; all CI is `.gitlab-ci.yml`.
+- `origin` = GitLab `gitlab.kriss.li/kriss/chess` (CI runs here) is the only remote. Push only there.
+- GitHub `Darknetzz/chess` is a read-only copy kept in sync by a GitLab push mirror (mirror id 8, HTTPS + fine-grained GitHub PAT, all branches and tags, keep divergent refs off). Never push to GitHub or add it as a remote: the mirror overwrites anything pushed there directly. If the PAT expires the mirror fails; check with `glab api --hostname gitlab.kriss.li projects/kriss%2Fchess/remote_mirrors`.
+- Do **not** add GitHub Actions; all CI is `.gitlab-ci.yml`.
 
 ## Docker images and releases
 
@@ -14,6 +16,6 @@ GitLab CI builds `linux/amd64` + `linux/arm64` images of the web app (`Dockerfil
 - every push to `dev`: `edge` and `build-N` (N from `version.json`);
 - `vX.Y.Z` tags: `X.Y.Z`, `X.Y`, `X`, `latest`, plus a GitLab release from the `CHANGELOG.md` section.
 
-Release: add a `## [vX.Y.Z] - YYYY-MM-DD` section at the top of `CHANGELOG.md` (leave it uncommitted), then `scripts/release.sh X.Y.Z --dry-run` and `scripts/release.sh X.Y.Z`. It lints, commits "Release vX.Y.Z", tags, pushes `dev` + tag to GitLab and GitHub, and creates the GitHub release with `gh`.
+Release: add a `## [vX.Y.Z] - YYYY-MM-DD` section at the top of `CHANGELOG.md` (leave it uncommitted), then `scripts/release.sh X.Y.Z --dry-run` and `scripts/release.sh X.Y.Z`. It lints, commits "Release vX.Y.Z", tags, pushes `dev` + tag to GitLab, waits (up to 10 min) for the mirror to copy the tag to GitHub, and creates the GitHub release with `gh`.
 
 CI variables on the GitLab project: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `GHCR_USERNAME`, `GHCR_TOKEN` (GitHub classic PAT, `write:packages`). Tokens are masked + protected, so `dev` and `v*` tags are protected refs. Without any token the `docker` job is skipped. Needs a privileged runner (docker:dind).

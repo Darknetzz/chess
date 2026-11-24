@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Release vX.Y.Z: commit CHANGELOG.md, tag, push dev + tag to GitLab and GitHub, create the GitHub release.
+# Release vX.Y.Z: commit CHANGELOG.md, tag, push dev + tag to GitLab, wait for the GitLab push mirror
+# to copy the tag to GitHub, create the GitHub release.
 # GitLab CI then creates the GitLab release and pushes the Docker images (see .gitlab-ci.yml).
 #
 # Before running: write a "## [vX.Y.Z] - YYYY-MM-DD" section at the top of CHANGELOG.md (uncommitted is fine).
@@ -50,8 +51,12 @@ git tag -a "$TAG" -m "$TAG"
 
 echo "== push to GitLab (CI: GitLab release + Docker Hub/GHCR images)"
 git push --quiet origin "$BRANCH" "$TAG"
-echo "== push to GitHub"
-git push --quiet github "$BRANCH" "$TAG"
+echo "== wait for the GitLab push mirror to bring $TAG to GitHub (up to 10 min)"
+deadline=$((SECONDS + 600))
+until gh api "repos/$GITHUB_REPO/git/ref/tags/$TAG" >/dev/null 2>&1; do
+  [ "$SECONDS" -lt "$deadline" ] || die "$TAG is not on GitHub yet: check the push mirror (GitLab > Settings > Repository > Mirroring repositories), then run: gh release create $TAG -R $GITHUB_REPO --title $TAG --verify-tag"
+  sleep 10
+done
 
 NOTES_FILE=$(mktemp); trap 'rm -f "$NOTES_FILE"' EXIT
 printf '%s\n' "$NOTES" > "$NOTES_FILE"
