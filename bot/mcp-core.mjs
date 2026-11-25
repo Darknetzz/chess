@@ -22,7 +22,7 @@ Time: nothing counts down until both sides are connected (aborted after 24 h if 
 Every tool that takes game_id also works with just your token. list_games shows ongoing games used through this server.
 To play against the user: create_game with human_side; you get only your own token plus a link for the user to play their side in the browser. Give them the link and never move for their side. To let the user play Stockfish while you watch: create_game with engine_side and human_side; give the user the returned link (never a bare token) and spectate with get_board using game_id and wait_since_ply. If the user gives you a token (e.g. the bot token from a "Bot" game in the web client), call get_board with just that token and play only that side.
 Custom start: create_game takes one of fen, pgn, from_game_id (an earlier game here; find them with list_games status/player) or library_game_id (the user's saved games in the web app; find them with list_library_games), plus ply to start after that many of its moves (default: its final position). The new game's move list starts empty at that position.
-Before both sides' first moves either side may abort; later, end a lost game with resign. Draws: draw offer/accept/decline (moving also declines). Takebacks: takeback request undoes your last move once the opponent accepts. set_analysis turns Stockfish analysis for the web client on/off mid-game (games created through MCP only). Watch "offers" in get_board and answer offers made to you.`;
+Before both sides' first moves either side may abort; later, end a lost game with resign. Draws: draw offer/accept/decline (moving also declines). Takebacks: takeback request undoes your last move once the opponent accepts; takeback offer lets the opponent undo their last move (e.g. after the user blunders) if they accept. In games against the user, offer takebacks when it suits the game, unless create_game had auto_takeback (then the user's own requests are granted at once). set_analysis turns Stockfish analysis for the web client on/off mid-game (games created through MCP only). Watch "offers" in get_board and answer offers made to you.`;
 
 export class RpcError extends Error {
   constructor(code, message, data) {
@@ -62,6 +62,7 @@ export const TOOLS = [
         premoves: { type: 'boolean', description: 'Allow players to queue moves (premoves) in the web client. Default true' },
         eval_bar: { type: 'boolean', description: 'Allow players to show the Stockfish evaluation bar (winning chances) in the web client. Default false' },
         analysis: { type: 'boolean', description: 'Allow players to use full Stockfish analysis (best move + line) in the web client. Default false' },
+        auto_takeback: { type: 'boolean', description: "Grant the user's takeback requests at once, without you accepting (the user's side with human_side, else both sides). Default false: you answer requests, and may offer takebacks yourself" },
         white_name: str('Display name for white (max 40 chars)', { maxLength: 40 }),
         black_name: str('Display name for black (max 40 chars)', { maxLength: 40 }),
         human_name: str("Display name for the user's side (human_side) or the side not played by the server engine (engine_side); applied once a random side is drawn. Max 40 chars", { maxLength: 40 }),
@@ -120,8 +121,8 @@ export const TOOLS = [
   action('draw', 'Chess draw offer', "Chess draw: offer a draw, or accept / decline the opponent's offer. Offering when the opponent already offers accepts it. Making a move declines a pending offer.", {
     action: str('offer, accept or decline', { enum: ['offer', 'accept', 'decline'] }),
   }),
-  action('takeback', 'Chess takeback', "Chess takeback (undo): ask to take back your last move (and the reply to it, if made), or accept / decline the opponent's request. Clocks are not refunded.", {
-    action: str('request, accept or decline', { enum: ['request', 'accept', 'decline'] }),
+  action('takeback', 'Chess takeback', "Chess takeback (undo): request = ask to take back your last move (and the reply to it, if made); offer = let the opponent take back their last move (e.g. a blunder) if they accept; accept / decline the opponent's pending one. Clocks are not refunded.", {
+    action: str('request, offer, accept or decline', { enum: ['request', 'offer', 'accept', 'decline'] }),
   }),
   action('set_analysis', 'Allow chess analysis', 'Chess game setting: turn Stockfish analysis (best move + line) in the web client on or off mid-game. Only in games created through MCP.', {
     enabled: { type: 'boolean', description: 'true allows analysis, false turns it off' },
@@ -272,11 +273,14 @@ export function describe(s, link) {
     : `Move time ${s.move_time_ms} ms`;
   lines.push(`Players: white ${name('white')}, black ${name('black')}. ${time}. Watch: ${link(s.game_id)}`);
   const rule = s.clock ? `clock ${tc(s.clock)}` : `${sec(s.move_time_ms)}s per move`;
-  lines.push(`Rules: ${rule}, premoves ${s.premoves === false ? 'off' : 'allowed'}, eval bar ${s.eval_bar ? 'allowed' : 'off'}, analysis ${s.analysis ? 'allowed' : 'off'} (web client).`);
+  lines.push(`Rules: ${rule}, premoves ${s.premoves === false ? 'off' : 'allowed'}, eval bar ${s.eval_bar ? 'allowed' : 'off'}, analysis ${s.analysis ? 'allowed' : 'off'} (web client)${s.auto_takeback ? `, takebacks by ${s.auto_takeback} granted at once` : ''}.`);
   const o = s.offers || {};
   const tail = (c, verb) => (!s.you ? '' : c === s.you ? ' (yours, waiting for the opponent)' : `: answer with ${verb} accept or decline`);
   if (o.draw) lines.push(`Draw offered by ${o.draw}${tail(o.draw, 'draw')}.`);
-  if (o.takeback) lines.push(`Takeback requested by ${o.takeback}${tail(o.takeback, 'takeback')}.`);
+  if (o.takeback) {
+    const what = o.takeback_kind === 'offer' ? `Takeback offered by ${o.takeback} (undoes ${o.takeback === 'white' ? 'black' : 'white'}'s last move)` : `Takeback requested by ${o.takeback}`;
+    lines.push(`${what}${tail(o.takeback, 'takeback')}.`);
+  }
   if (s.status === 'ongoing' && s.ply < 2) lines.push('Abort is possible until both sides have made their first move.');
   return lines.join('\n');
 }
@@ -313,6 +317,7 @@ async function callTool(backend, name, a = {}, link) {
         if (typeof a.analysis !== 'boolean') fail('"analysis" must be a boolean');
         opts.analysis = a.analysis;
       }
+      if (a.auto_takeback !== undefined && typeof a.auto_takeback !== 'boolean') fail('"auto_takeback" must be a boolean');
       if (optStr(a.white_name, 'white_name')) opts.white = { name: a.white_name };
       if (optStr(a.black_name, 'black_name')) opts.black = { name: a.black_name };
       if (optStr(a.engine_side, 'engine_side')) opts.engine = { side: a.engine_side, level: optInt(a.engine_level, 'engine_level') ?? 5 };
@@ -325,6 +330,7 @@ async function callTool(backend, name, a = {}, link) {
           if (human !== 'random' && human === opts.engine.side) fail('"human_side" and "engine_side" must differ');
           opts.engine.side = side === 'white' ? 'black' : 'white';
           sideNames(opts, side, opts.engine.side);
+          if (a.auto_takeback) opts.auto_takeback = side;
           const { [`${side}_token`]: humanToken, ...s } = await backend.create(opts);
           Object.assign(s, { human_side: side, human_link: link(s.game_id, humanToken) });
           return {
@@ -337,6 +343,7 @@ async function callTool(backend, name, a = {}, link) {
         }
         const agent = side === 'white' ? 'black' : 'white';
         sideNames(opts, side, agent);
+        if (a.auto_takeback) opts.auto_takeback = side;
         const full = await backend.create(opts);
         const { [`${side}_token`]: humanToken, ...s } = full;
         Object.assign(s, { human_side: side, human_link: link(s.game_id, humanToken), agent_side: agent, token: s[`${agent}_token`] });
@@ -351,6 +358,7 @@ async function callTool(backend, name, a = {}, link) {
         const other = opts.engine.side === 'white' ? 'black' : 'white';
         sideNames(opts, other, opts.engine.side);
       } else if (a.human_name !== undefined || a.engine_name !== undefined) fail('"human_name" / "engine_name" need "human_side" or "engine_side"');
+      if (a.auto_takeback) opts.auto_takeback = 'both';
       const s = await backend.create(opts);
       const tokens = ['white', 'black'].filter((c) => s[`${c}_token`]).map((c) => `${c}_token: ${s[`${c}_token`]}`);
       return { s, text: `Created game ${s.game_id}.\n${tokens.join('\n')}\nKeep tokens secret; pass one to make_move/get_board.\n\n${describe(s, link)}` };
@@ -377,10 +385,14 @@ async function callTool(backend, name, a = {}, link) {
     case 'draw':
     case 'takeback': {
       const token = reqStr(a.token, 'token');
-      const act = choice('action', name === 'draw' ? ['offer', 'accept', 'decline'] : ['request', 'accept', 'decline']);
+      const act = choice('action', name === 'draw' ? ['offer', 'accept', 'decline'] : ['request', 'offer', 'accept', 'decline']);
       const s = await backend[name](await gameId(token), token, act);
       const what = name === 'draw' ? 'Draw' : 'Takeback';
       const done = { offer: 'offered', request: 'requested', accept: 'accepted', decline: 'declined' }[act];
+      // A request or offer can be granted on the spot (auto_takeback, or it met the opponent's own).
+      if (name === 'takeback' && (act === 'request' || act === 'offer') && !s.offers?.takeback) return { s, text: `Takeback done.
+
+${describe(s, link)}` };
       return { s, text: `${what} ${done}.\n\n${describe(s, link)}` };
     }
     case 'set_analysis': {
@@ -409,7 +421,7 @@ ${describe(s, link)}` };
         const from = g.source ? `, from ${g.source}` : '';
         if (g.status !== 'ongoing') return `${head}, ${g.status} ${g.result}${g.reason ? ` (${g.reason.replace(/_/g, ' ')})` : ''}${from}`;
         const clocks = g.clocks ? `, clocks ${Math.round(g.clocks.white / 1000)}s / ${Math.round(g.clocks.black / 1000)}s` : '';
-        const offers = [g.offers?.draw && `draw offered by ${g.offers.draw}`, g.offers?.takeback && `takeback asked by ${g.offers.takeback}`].filter(Boolean);
+        const offers = [g.offers?.draw && `draw offered by ${g.offers.draw}`, g.offers?.takeback && `takeback ${g.offers.takeback_kind === 'offer' ? 'offered' : 'asked'} by ${g.offers.takeback}`].filter(Boolean);
         return `${head}, ${g.turn} to move${clocks}${from}${offers.length ? `; ${offers.join(', ')}` : ''}`;
       };
       const what = `${status === 'all' ? '' : `${status} `}game(s)${player ? ` with a player named like "${player}"` : ''}`;

@@ -89,7 +89,7 @@ Refereed games for external bots, or a bot against a human. The server holds the
 | `POST /api/games/{id}/resign` | `{token}` | Resign the token's side |
 | `POST /api/games/{id}/abort` | `{token}` | Abort (no result) while `ply < 2`, i.e. before both sides' first moves |
 | `POST /api/games/{id}/draw` | `{token, action}` | `offer`, `accept` or `decline` a draw (see *Offers*) |
-| `POST /api/games/{id}/takeback` | `{token, action}` | `request`, `accept` or `decline` a takeback (see *Offers*); after a mate, stalemate, draw or resignation (not timeout) against an engine, `request` reopens the game (browser engines: add `opponent_token`) |
+| `POST /api/games/{id}/takeback` | `{token, action}` | `request`, `offer`, `accept` or `decline` a takeback (see *Offers*); after a mate, stalemate, draw or resignation (not timeout) against an engine, `request` reopens the game (browser engines: add `opponent_token`) |
 | `POST /api/games/{id}/name` | `{token, name}` | Set the display name of the token's side (up to 40 chars, `""` clears it) while the game is ongoing |
 | `POST /api/games/{id}/rules` | `{token, analysis}` | Allow (`true`) or forbid (`false`) Stockfish analysis mid-game. Only in games created with `agent: true` (`409 rules_locked` otherwise) |
 
@@ -101,6 +101,7 @@ Refereed games for external bots, or a bot against a human. The server holds the
 - `premoves`: `true` (default) or `false`. Whether the web board lets players queue moves during the opponent's turn. A game rule chosen by the host; the server can't tell a premove from a fast move, so it is enforced by the web client only
 - `eval_bar`: `true` or `false` (default). Whether players may show the Stockfish evaluation bar (winning chances) in the web client while the game is going on. A game rule chosen by the host, enforced by the web client only
 - `analysis`: `true` or `false` (default). Whether players may use full Stockfish analysis (best move + line) in the web client while the game is going on. A game rule like `eval_bar`
+- `auto_takeback`: `"white"`, `"black"` or `"both"`. Takeback requests from that side are granted at once, without the opponent accepting. State shows it as `auto_takeback` (`null` when off). MCP `create_game` sets it with `auto_takeback: true` (the user's side with `human_side`)
 - `agent`: `true` marks a game created by an AI agent (the MCP servers set it). Only such games allow changing `analysis` mid-game via `/rules`; state shows it as `rules_changeable`
 - `white` / `black`: `{"name": "…"}`, a display name of up to 40 characters
 - `engine`: `{"side": "white"|"black", "level": 0-20}`. The server plays that side with Stockfish, and its token is not returned. This is meant for headless games such as bot vs Stockfish. Engine resources are capped: see `CHESS_BOT_ENGINE_*`. When a human plays Stockfish on the board, Stockfish runs in the browser instead and holds a normal token.
@@ -141,7 +142,7 @@ curl -s localhost:3000/api/games -H 'Content-Type: application/json' \
   "first_move_ms": 1800000,     // limit for each side's first move, once both sides have joined
   "clock": null,                // clock games: { "initial_ms": 300000, "increment_ms": 3000 }
   "clocks": null,               // clock games: time left now, { "white": 297512, "black": 300000 }
-  "offers": { "draw": null, "takeback": null }, // pending offer: the side that made it (white | black)
+  "offers": { "draw": null, "takeback": null, "takeback_kind": null }, // pending offer: the side that made it (white | black); takeback_kind: request | offer
   "premoves": true,             // the host allows premoves in the web client
   "eval_bar": false,            // the host allows the evaluation bar in the web client
   "server_now": 1794420812000,  // server time of this response, to correct for client clock skew
@@ -160,18 +161,19 @@ curl -s localhost:3000/api/games -H 'Content-Type: application/json' \
 
 **Offers:**
 - *Draw*: `offer` sets `offers.draw` to your side; the opponent can `accept` (`status: "draw"`, reason `agreement`) or `decline`. Offering while the opponent's offer is pending accepts it. Making a move declines the opponent's pending offer; your own offer stays open through your move. One offer per side per position.
-- *Takeback*: `request` asks to undo your last move: one ply if the opponent hasn't replied yet, else two (your move and the reply), so it is your turn again. Once accepted, the moves are removed and pending offers are cleared. Clocks are not refunded: both sides keep the time they have; the side to move gets a fresh per-move limit, or its clock runs again.
-- A server engine side grants takebacks right away and accepts a draw only if its eval is +0.5 or worse for it.
+- *Takeback*: `request` asks to undo your last move: one ply if the opponent hasn't replied yet, else two (your move and the reply), so it is your turn again. Once accepted, the moves are removed and pending offers are cleared. Clocks are not refunded: both sides keep the time they have; the side to move gets a fresh per-move limit, or its clock runs again. With `auto_takeback` for your side, a request is granted at once.
+- *Takeback offer*: `offer` proposes that the opponent undo *their* last move (e.g. after a blunder): `offers.takeback` is your side, `offers.takeback_kind` is `offer`. The opponent can `accept` (their move, plus your reply if made, is removed) or `decline`. A `request` meeting the opponent's offer, or an `offer` meeting their request, accepts it. Moving voids any pending takeback.
+- A server engine side grants takeback requests right away, declines takeback offers and accepts a draw only if its eval is +0.5 or worse for it.
 
 **Errors** come back as `{"error": "<code>", "message": "<text>"}`:
 
 | HTTP | `error` | When |
 |---|---|---|
-| 400 | `invalid_json`, `invalid_move_format`, `missing_token`, `invalid_action`, `invalid_move_time`, `invalid_clock`, `invalid_premoves`, `invalid_eval_bar`, `invalid_analysis`, `invalid_agent`, `invalid_name`, `invalid_since` | Malformed request |
+| 400 | `invalid_json`, `invalid_move_format`, `missing_token`, `invalid_action`, `invalid_move_time`, `invalid_clock`, `invalid_premoves`, `invalid_eval_bar`, `invalid_analysis`, `invalid_auto_takeback`, `invalid_agent`, `invalid_name`, `invalid_since` | Malformed request |
 | 401 | `invalid_token` | Token matches neither side |
 | 404 | `not_found` | Unknown game or endpoint |
 | 405 | `method_not_allowed` | Wrong HTTP method |
-| 409 | `not_your_turn`, `game_over`, `cannot_abort`, `already_offered`, `no_offer`, `nothing_to_take_back`, `rules_locked` | Valid token, wrong moment |
+| 409 | `not_your_turn`, `game_over`, `cannot_abort`, `already_offered`, `no_offer`, `offer_pending`, `nothing_to_take_back`, `rules_locked` | Valid token, wrong moment |
 | 413 | `body_too_large` | Body over 4 KB |
 | 422 | `illegal_move` | Not legal in this position. Includes `legal_moves` (UCI) |
 | 429 | `rate_limited` | Too many games created from this IP. Includes `retry_after_s` |
@@ -197,13 +199,13 @@ The same game API as [MCP](https://modelcontextprotocol.io) tools, so AI agents 
 
 | Tool | Arguments | Does |
 |---|---|---|
-| `create_game` | `move_time_ms?` or `clock_initial_ms?` + `clock_increment_ms?`, `premoves?`, `eval_bar?`, `analysis?`, `white_name?`, `black_name?`, `human_name?`, `engine_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20), `human_side?` (`white`/`black`/`random`); start: one of `fen?`, `pgn?`, `from_game_id?`, `library_game_id?` (+ `library_key?`), plus `ply?` | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play. With `human_side`, only the agent's token plus `human_link`, a browser link for the user to play that side. `human_name` / `engine_name` name the user's side and the agent's (or server engine's) side, applied after a `random` side is drawn. The start options work as in *Custom start*; `library_game_id` starts from a game in the user's web-app library |
+| `create_game` | `move_time_ms?` or `clock_initial_ms?` + `clock_increment_ms?`, `premoves?`, `eval_bar?`, `analysis?`, `auto_takeback?`, `white_name?`, `black_name?`, `human_name?`, `engine_name?`, `engine_side?` (`white`/`black`), `engine_level?` (0–20), `human_side?` (`white`/`black`/`random`); start: one of `fen?`, `pgn?`, `from_game_id?`, `library_game_id?` (+ `library_key?`), plus `ply?` | Create a game; returns `game_id` and the token(s) for every side the server engine doesn't play. With `human_side`, only the agent's token plus `human_link`, a browser link for the user to play that side. `human_name` / `engine_name` name the user's side and the agent's (or server engine's) side, applied after a `random` side is drawn. The start options work as in *Custom start*; `library_game_id` starts from a game in the user's web-app library |
 | `make_move` | `game_id?`, `token`, `move` (UCI) | Play a move; an illegal move returns an error listing the legal moves |
 | `get_board` | `game_id?`, `token?`, `wait_since_ply?` | ASCII board, FEN, moves, legal moves, status, time left, rules (time control, premoves, eval bar) and pending offers. With `wait_since_ply` it long-polls (up to ~25 s) for the opponent's move |
 | `resign` | `game_id?`, `token` | Resign |
 | `abort` | `game_id?`, `token` | Abort before both sides' first moves |
 | `draw` | `game_id?`, `token`, `action` (`offer`/`accept`/`decline`) | Draw offers |
-| `takeback` | `game_id?`, `token`, `action` (`request`/`accept`/`decline`) | Takeback requests |
+| `takeback` | `game_id?`, `token`, `action` (`request`/`offer`/`accept`/`decline`) | Takeback requests, and offers to let the opponent undo their last move |
 | `set_analysis` | `game_id?`, `token`, `enabled` | Allow or forbid Stockfish analysis in the web client mid-game (games created through MCP only) |
 | `get_pgn` | `game_id?`, `token?` | PGN of the game, finished or ongoing |
 | `list_games` | `status?` (`ongoing`/`over`/`all`), `player?`, `limit?` | Games without tokens. Default: ongoing games created or played (with a token) through MCP. With `player`: every game on the server (web-client ones too) where a player name contains that text, e.g. someone's previous games to branch from. Over stdio: only games this process saw |

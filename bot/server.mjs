@@ -147,13 +147,24 @@ if (db.prepare('PRAGMA user_version').get().user_version < 8) {
     COMMIT;
   `);
 }
+if (db.prepare('PRAGMA user_version').get().user_version < 9) {
+  // takeback_kind: 'request' (initiator undoes its own move) or 'offer' (initiator lets the opponent undo theirs).
+  // auto_takeback: 'w' | 'b' | 'both' = takeback requests from that side are granted at once (host rule).
+  db.exec(`
+    BEGIN;
+    ALTER TABLE games ADD COLUMN takeback_kind TEXT;
+    ALTER TABLE games ADD COLUMN auto_takeback TEXT;
+    PRAGMA user_version = 9;
+    COMMIT;
+  `);
+}
 const q = {
   insert: db.prepare(`INSERT INTO games (id, created_at, white_hash, black_hash, move_time_ms, deadline_at, white_name, black_name, engine_side, engine_level,
-    clock_ms, increment_ms, white_ms, black_ms, premoves, eval_bar, analysis, agent, start_fen, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+    clock_ms, increment_ms, white_ms, black_ms, premoves, eval_bar, analysis, agent, start_fen, source, auto_takeback) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   get: db.prepare('SELECT * FROM games WHERE id = ?'),
   ongoing: db.prepare(`SELECT * FROM games WHERE status = 'ongoing'`),
   save: db.prepare(`UPDATE games SET moves = ?, status = ?, result = ?, reason = ?, last_move_at = ?, deadline_at = ?, white_ms = ?, black_ms = ?, joined_at = ?,
-    draw_offer = ?, takeback_offer = ? WHERE id = ?`),
+    draw_offer = ?, takeback_offer = ?, takeback_kind = ? WHERE id = ?`),
   byHash: db.prepare('SELECT id FROM games WHERE white_hash = ? OR black_hash = ? LIMIT 1'),
   setAnalysis: db.prepare('UPDATE games SET analysis = ? WHERE id = ?'),
   markMcp: db.prepare('UPDATE games SET mcp = 1 WHERE id = ? AND mcp = 0'),
@@ -230,7 +241,7 @@ function engineTurn(g, attempt = 0) {
 }
 
 /**
- * The server engine answers offers made to it: takebacks are always granted; a draw is accepted
+ * The server engine answers offers made to it: takeback requests are always granted, offers to undo its own move declined; a draw is accepted
  * when its own eval is at most +0.5 (or it is getting mated), else declined.
  */
 function engineAnswer(g) {
@@ -239,7 +250,8 @@ function engineAnswer(g) {
   if (!me || r.status !== 'ongoing') return;
   const them = me === 'w' ? 'b' : 'w';
   if (r.takeback_offer === them) {
-    undo(g, plyToUndo(g, them));
+    if (r.takeback_kind === 'offer') r.takeback_offer = null;
+    else undo(g, plyToUndo(g, them));
     persist(g);
     wake(g);
     engineTurn(g);
@@ -291,7 +303,7 @@ function engineAnswer(g) {
 
 function persist(g) {
   const r = g.row;
-  q.save.run(r.moves, r.status, r.result, r.reason, r.last_move_at, r.deadline_at, r.white_ms, r.black_ms, r.joined_at, r.draw_offer, r.takeback_offer, r.id);
+  q.save.run(r.moves, r.status, r.result, r.reason, r.last_move_at, r.deadline_at, r.white_ms, r.black_ms, r.joined_at, r.draw_offer, r.takeback_offer, r.takeback_offer ? r.takeback_kind : null, r.id);
 }
 
 function finish(g, status, result, reason) {
@@ -407,7 +419,9 @@ function state(g) {
     first_move_ms: FIRST_MOVE_MS,
     clock: isClock(r) ? { initial_ms: r.clock_ms, increment_ms: r.increment_ms } : null,
     clocks: isClock(r) ? { white: timeLeft(g, 'w'), black: timeLeft(g, 'b') } : null,
-    offers: { draw: SIDE[r.draw_offer] ?? null, takeback: SIDE[r.takeback_offer] ?? null },
+    // takeback_kind: 'request' = the side in "takeback" asks to undo its own move; 'offer' = it lets the opponent undo theirs.
+    offers: { draw: SIDE[r.draw_offer] ?? null, takeback: SIDE[r.takeback_offer] ?? null, takeback_kind: r.takeback_offer ? (r.takeback_kind || 'request') : null },
+    auto_takeback: AUTO_TB[r.auto_takeback] ?? null,
     premoves: r.premoves !== 0,
     eval_bar: r.eval_bar === 1,
     analysis: r.analysis === 1,
@@ -628,6 +642,8 @@ function create(body, req) {
   if (body.eval_bar != null && typeof body.eval_bar !== 'boolean') throw err(400, 'invalid_eval_bar', '"eval_bar" must be true or false');
   if (body.analysis != null && typeof body.analysis !== 'boolean') throw err(400, 'invalid_analysis', '"analysis" must be true or false');
   if (body.agent != null && typeof body.agent !== 'boolean') throw err(400, 'invalid_agent', '"agent" must be true or false');
+  const autoTb = body.auto_takeback == null ? null : { white: 'w', black: 'b', both: 'both' }[body.auto_takeback];
+  if (body.auto_takeback != null && !autoTb) throw err(400, 'invalid_auto_takeback', '"auto_takeback" must be "white", "black" or "both"');
   const start = startPosition(body);
   rateLimit(clientIp(req));
   const tokens = { white: randomBytes(32).toString('base64url'), black: randomBytes(32).toString('base64url') };
@@ -636,7 +652,7 @@ function create(body, req) {
   do id = newId(); while (q.get.get(id));
   q.insert.run(id, now, hash(tokens.white), hash(tokens.black), ms, now + JOIN_MS, names.white, names.black, engine?.side ?? null, engine?.level ?? null,
     clock?.initial ?? null, clock?.inc ?? null, clock?.initial ?? null, clock?.initial ?? null, body.premoves === false ? 0 : 1, body.eval_bar === true ? 1 : 0, body.analysis === true ? 1 : 0, body.agent === true ? 1 : 0,
-    start.fen, start.source);
+    start.fen, start.source, autoTb);
   const g = load(id);
   const out = { ...state(g) };
   // The server plays the engine side, so its token is never handed out.
@@ -715,7 +731,8 @@ function undo(g, n) {
   schedule(g);
 }
 
-const ACTIONS = { draw: ['offer', 'accept', 'decline'], takeback: ['request', 'accept', 'decline'] };
+const ACTIONS = { draw: ['offer', 'accept', 'decline'], takeback: ['request', 'offer', 'accept', 'decline'] };
+const AUTO_TB = { w: 'white', b: 'black', both: 'both' };
 
 /** Common start of a player action: the token's side, game must be on. */
 function actor(g, body) {
@@ -788,25 +805,50 @@ function reopen(g, body) {
   return commit(g);
 }
 
-/** Takebacks: request (undoes the requester's last move once granted), accept, decline. */
+/**
+ * Takebacks: request (undo the requester's last move once the opponent accepts; at once with auto_takeback for that side),
+ * offer (let the opponent undo their last move if they accept), accept, decline.
+ * A request meeting the opponent's offer (or an offer meeting their request) accepts it.
+ */
 function takeback(g, body) {
   if (g.row.status !== 'ongoing') return reopen(g, body);
   const side = actor(g, body);
   needAction('takeback', body.action);
   const r = g.row;
-  const theirs = r.takeback_offer && r.takeback_offer !== side;
-  if (body.action === 'request' && !theirs) {
-    if (r.takeback_offer === side) throw err(409, 'already_offered', 'You already asked for a takeback');
-    if (!plyToUndo(g, side)) throw err(409, 'nothing_to_take_back', 'You have not made a move yet');
-    if (g.asked.takeback[side] === g.gen) throw err(409, 'already_offered', 'You already asked for a takeback in this position');
-    g.asked.takeback[side] = g.gen;
-    r.takeback_offer = side;
-  } else if (body.action === 'decline') {
-    if (!theirs) throw err(409, 'no_offer', 'Your opponent has not asked for a takeback');
+  const other = side === 'w' ? 'b' : 'w';
+  const theirs = r.takeback_offer && r.takeback_offer !== side ? r.takeback_kind || 'request' : null;
+  // Whose move a pending takeback undoes: the requester's, or the one offered it.
+  const undoFor = () => (theirs === 'offer' ? side : other);
+  const act = body.action;
+  if (act === 'request' && theirs !== 'request') {
+    if (theirs === 'offer') undo(g, plyToUndo(g, side));
+    else {
+      if (r.takeback_offer === side) throw err(409, 'already_offered', 'You already have a takeback pending');
+      if (!plyToUndo(g, side)) throw err(409, 'nothing_to_take_back', 'You have not made a move yet');
+      if ([side, 'both'].includes(r.auto_takeback)) undo(g, plyToUndo(g, side));
+      else {
+        if (g.asked.takeback[side] === g.gen) throw err(409, 'already_offered', 'You already asked for a takeback in this position');
+        g.asked.takeback[side] = g.gen;
+        Object.assign(r, { takeback_offer: side, takeback_kind: 'request' });
+      }
+    }
+  } else if (act === 'offer' && theirs !== 'offer') {
+    if (theirs === 'request') undo(g, plyToUndo(g, other));
+    else {
+      if (r.takeback_offer === side) throw err(409, 'already_offered', 'You already have a takeback pending');
+      if (!plyToUndo(g, other)) throw err(409, 'nothing_to_take_back', 'Your opponent has not made a move yet');
+      if (g.asked.takeback[side] === g.gen) throw err(409, 'already_offered', 'You already offered a takeback in this position');
+      g.asked.takeback[side] = g.gen;
+      Object.assign(r, { takeback_offer: side, takeback_kind: 'offer' });
+    }
+  } else if (act === 'decline') {
+    if (!theirs) throw err(409, 'no_offer', 'Your opponent has no takeback pending');
     r.takeback_offer = null;
   } else {
-    if (!theirs) throw err(409, 'no_offer', 'Your opponent has not asked for a takeback');
-    undo(g, plyToUndo(g, r.takeback_offer));
+    // accept; a request meeting their request accepts it too (as before). Two offers cross: answer theirs first.
+    if (!theirs) throw err(409, 'no_offer', 'Your opponent has no takeback pending');
+    if (act === 'offer') throw err(409, 'offer_pending', `Your opponent ${theirs === 'offer' ? 'offers you' : 'asks for'} a takeback: accept or decline it first`);
+    undo(g, plyToUndo(g, undoFor()));
   }
   return commit(g);
 }

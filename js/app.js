@@ -1438,15 +1438,16 @@ function renderNetActions() {
   // A takeback needs a move of mine: the last ply when it's the opponent's turn, else the one before.
   const canTakeBack = playing && s.ply >= (s.turn === me ? 2 : 1);
   $('#takeback-btn').prop('hidden', !playing).prop('disabled', !canTakeBack || offers.takeback === me);
-  setButton($('#takeback-btn'), null, offers.takeback === me ? 'Takeback asked' : 'Takeback');
+  setButton($('#takeback-btn'), null, offers.takeback === me ? (offers.takeback_kind === 'offer' ? 'Takeback offered' : 'Takeback asked') : 'Takeback');
   // The in-browser engine answers offers to its own side; only show the person's own pending offers then.
   const rows = [];
   const engine = !!netEngineSide();
   for (const [kind, label] of [['draw', 'a draw'], ['takeback', 'a takeback']]) {
     const by = offers[kind];
     if (!by) continue;
-    if (by === me) rows.push(`<div class="net-offer mine"><span>You offered ${label}${engine ? ', Stockfish is deciding…' : ', waiting for the opponent'}</span></div>`);
-    else rows.push(`<div class="net-offer"><span>${by === 'white' ? 'White' : 'Black'} ${kind === 'draw' ? 'offers a draw' : 'asks for a takeback'}</span>`
+    const gift = kind === 'takeback' && offers.takeback_kind === 'offer';
+    if (by === me) rows.push(`<div class="net-offer mine"><span>You offered ${gift ? 'to take back their move' : label}${engine ? ', Stockfish is deciding…' : ', waiting for the opponent'}</span></div>`);
+    else rows.push(`<div class="net-offer"><span>${by === 'white' ? 'White' : 'Black'} ${kind === 'draw' ? 'offers a draw' : gift ? 'offers to take back your last move' : 'asks for a takeback'}</span>`
       + `<button type="button" data-offer="${kind}" data-act="accept">Accept</button><button type="button" data-offer="${kind}" data-act="decline">Decline</button></div>`);
   }
   $('#net-offers').html(rows.join('')).prop('hidden', !rows.length);
@@ -1463,12 +1464,13 @@ function syncOfferModal(offers, me) {
     if (dlg.open) dlg.close();
     return;
   }
-  const key = `${remote.id}:${kind}:${remote.server.ply}`;
+  const key = `${remote.id}:${kind}:${offers.takeback_kind}:${remote.server.ply}`;
   if (offerShown === key && dlg.open) return;
   offerShown = key;
   const by = offers[kind] === 'white' ? 'White' : 'Black';
-  $('#offer-title').html(`${icon(kind === 'draw' ? 'handshake' : 'undo-2')}${kind === 'draw' ? 'Draw offer' : 'Takeback request'}`);
-  $('#offer-text').text(kind === 'draw' ? `${by} offers a draw.` : `${by} asks to take back their last move.`);
+  const gift = kind === 'takeback' && offers.takeback_kind === 'offer';
+  $('#offer-title').html(`${icon(kind === 'draw' ? 'handshake' : 'undo-2')}${kind === 'draw' ? 'Draw offer' : gift ? 'Takeback offer' : 'Takeback request'}`);
+  $('#offer-text').text(kind === 'draw' ? `${by} offers a draw.` : gift ? `${by} offers to take back your last move.` : `${by} asks to take back their last move.`);
   $('#offer-modal').data('kind', kind);
   if (!dlg.open) dlg.showModal();
 }
@@ -1492,7 +1494,7 @@ async function remoteAction(call, what) {
   }
 }
 
-/** The in-browser Stockfish answers offers made to its side: takebacks granted, draws by eval (≤ +0.5 for it). */
+/** The in-browser Stockfish answers offers made to its side: takeback requests granted (offers to undo its own move declined), draws by eval (≤ +0.5 for it). */
 async function netEngineAnswer() {
   const s = remote?.server;
   const side = netEngineSide();
@@ -1501,7 +1503,7 @@ async function netEngineAnswer() {
   if (s.offers?.takeback === them) {
     remote.answering = true;
     try {
-      applyServer(await botApi.takeback(remote.id, remote.engineToken, 'accept'));
+      applyServer(await botApi.takeback(remote.id, remote.engineToken, s.offers.takeback_kind === 'offer' ? 'decline' : 'accept'));
     } catch (err) {
       remote.error = `Stockfish: ${err.message}`;
     } finally {
