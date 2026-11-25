@@ -48,7 +48,8 @@ export const TOOLS = [
     name: 'create_game',
     title: 'Create chess game',
     description:
-      'Create a game, from the standard position or a custom one (fen, pgn, from_game_id or library_game_id; ply picks the moment). Returns game_id and a secret token for every side not played by the server engine. ' +
+      'Start a new chess game (new game, create game, play chess): play chess against the user (browser link), let the user play Stockfish, or play both sides yourself. ' +
+      'From the standard position or a custom one (fen, pgn, from_game_id or library_game_id; ply picks the moment). Returns game_id and a secret token for every side not played by the server engine. ' +
       "Keep tokens private: a token is the only credential for its side. Time control: move_time_ms per move, " +
       'or a chess clock with clock_initial_ms (+ clock_increment_ms). Timing starts once both sides have joined and made a first move (30 min each). ' +
       'With human_side you play only the other side: the result gives your token and a browser link for the user to play human_side.',
@@ -83,8 +84,8 @@ export const TOOLS = [
   },
   {
     name: 'make_move',
-    title: 'Make a move',
-    description: 'Play a move for the side that token controls. On an illegal move the error lists the legal moves.',
+    title: 'Make a chess move',
+    description: 'Play a chess move in a game (from create_game) for the side that token controls. On an illegal move the error lists the legal moves.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -99,9 +100,9 @@ export const TOOLS = [
   },
   {
     name: 'get_board',
-    title: 'Read the board',
+    title: 'Show the chess board',
     description:
-      'Current position as an ASCII board, FEN, move list, legal moves, status and the deadline. ' +
+      'Show the current chess board and game state: position as an ASCII board, FEN, move list, legal moves, status and the deadline. ' +
       'With a token, "you" says which side it plays. With wait_since_ply, waits (up to ~25 s) until ply > wait_since_ply or the game ends.',
     inputSchema: {
       type: 'object',
@@ -114,29 +115,29 @@ export const TOOLS = [
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
-  action('resign', 'Resign', 'Resign the game for the side that token controls: the opponent wins.', {}, { destructiveHint: true }),
-  action('abort', 'Abort', 'Abort the game (no result) before both sides have made their first move.', {}, { destructiveHint: true }),
-  action('draw', 'Draw offer', "Offer a draw, or accept / decline the opponent's offer. Offering when the opponent already offers accepts it. Making a move declines a pending offer.", {
+  action('resign', 'Resign chess game', 'Resign a chess game for the side that token controls: the opponent wins.', {}, { destructiveHint: true }),
+  action('abort', 'Abort chess game', 'Abort a chess game (no result) before both sides have made their first move.', {}, { destructiveHint: true }),
+  action('draw', 'Chess draw offer', "Chess draw: offer a draw, or accept / decline the opponent's offer. Offering when the opponent already offers accepts it. Making a move declines a pending offer.", {
     action: str('offer, accept or decline', { enum: ['offer', 'accept', 'decline'] }),
   }),
-  action('takeback', 'Takeback', "Ask to take back your last move (and the reply to it, if made), or accept / decline the opponent's request. Clocks are not refunded.", {
+  action('takeback', 'Chess takeback', "Chess takeback (undo): ask to take back your last move (and the reply to it, if made), or accept / decline the opponent's request. Clocks are not refunded.", {
     action: str('request, accept or decline', { enum: ['request', 'accept', 'decline'] }),
   }),
-  action('set_analysis', 'Allow analysis', 'Turn Stockfish analysis (best move + line) in the web client on or off mid-game. Only in games created through MCP.', {
+  action('set_analysis', 'Allow chess analysis', 'Chess game setting: turn Stockfish analysis (best move + line) in the web client on or off mid-game. Only in games created through MCP.', {
     enabled: { type: 'boolean', description: 'true allows analysis, false turns it off' },
   }),
   {
     name: 'get_pgn',
-    title: 'Export PGN',
-    description: 'PGN of the game (finished or ongoing) with players, result, time control and termination.',
+    title: 'Export chess PGN',
+    description: 'Export a chess game as PGN (finished or ongoing) with players, result, time control and termination.',
     inputSchema: { type: 'object', properties: { game_id: GAME_ID, token: str('Your token; required without game_id') }, additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
     name: 'list_games',
-    title: 'List games',
+    title: 'List chess games',
     description:
-      'Games on this server: id, players, ply, side to move or result. Default: ongoing games created or played through MCP. ' +
+      'List chess games on this server (to resume one or start a new game from it with create_game): id, players, ply, side to move or result. Default: ongoing games created or played through MCP. ' +
       'With player: any game (also web-client games) where a player name contains that text, e.g. to find a player\'s previous games to start from. Tokens are not shown.',
     inputSchema: {
       type: 'object',
@@ -151,9 +152,9 @@ export const TOOLS = [
   },
   {
     name: 'list_library_games',
-    title: 'List saved games',
+    title: 'List saved chess games',
     description:
-      "Games saved in the user's web-app account (My games): id, date, players, result, length. Use an id as create_game library_game_id. " +
+      "List saved chess games in the user's web-app account (My games): id, date, players, result, length. Use an id as create_game library_game_id. " +
       'Needs the account\'s API key (Account → API key in the web app) unless the server has a default.',
     inputSchema: {
       type: 'object',
