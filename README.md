@@ -2,6 +2,8 @@
 
 # Chess
 
+> **Source:** [gitlab.kriss.li/kriss/chess](https://gitlab.kriss.li/kriss/chess) on GitLab (issues, merge requests, CI). [github.com/Darknetzz/chess](https://github.com/Darknetzz/chess) is a read-only push mirror.
+
 Browser chess against a friend (invite link), Stockfish or your own bot, all refereed by one server-side game API, plus a local analysis board. Optional accounts save your games. No build step, no npm, no Composer.
 
 - Rules/SAN/FEN/PGN: [chess.js](https://github.com/jhlywa/chess.js) 1.4.0, vendored in `vendor/chess.js/` (shared by the browser and the bot API server)
